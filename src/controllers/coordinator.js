@@ -1,5 +1,5 @@
 import { sql, poolPromise } from "../database/db.js";
-
+import parseDate from "../helper/parseDate.js";
 const CoordinatorController = {
     getAllCoordinators: async (req, res) => {
         try {
@@ -49,11 +49,17 @@ const CoordinatorController = {
             const result = await pool
                 .request()
                 .input("id", sql.Int, Number(id))
-                .query("SELECT * FROM coordinator WHERE id = @id");
+                .query(`
+                SELECT
+                    c.*,
+                    e.*
+                FROM coordinator AS c
+                LEFT JOIN [exception] AS e
+                    ON e.coordinator_id = c.id
+                WHERE c.id = @id;
+            `);
 
-            const coordinator = result.recordset[0];
-
-            if (!coordinator) {
+            if (result.recordset.length === 0) {
                 return res.status(404).json({
                     message: "Coordinator not found",
                 });
@@ -61,8 +67,9 @@ const CoordinatorController = {
 
             return res.status(200).json({
                 message: "Get coordinator by ID successful",
-                coordinator,
+                coordinator: result.recordset,
             });
+
         } catch (error) {
             console.error("Get coordinator by ID error:", error);
 
@@ -96,6 +103,9 @@ const CoordinatorController = {
             const companyAuthorizationPicture = req.body.companyAuthorizationPicture;
             const socialInsurancePicture = req.body.socialInsurancePicture;
             const supervisorNationalIdPicture = req.body.supervisorNationalIdPicture;
+            const exceptionName = req.body.exceptionName;
+            const exceptionStartDate = req.body.exceptionStartDate;
+            const exceptionEndDate = req.body.exceptionEndDate;
             if (
                 code === undefined ||
                 code === null ||
@@ -244,10 +254,43 @@ const CoordinatorController = {
                     @supervisorNationalIdPicture
                 )
             `);
+            const addingException = await pool
+                .request()
+                .input("coordinatorId", sql.Int, result.recordset[0].id)
+                .input("exceptionName", sql.NVarChar(255), exceptionName)
+                .input("exceptionStartDate", sql.Date, parseDate(exceptionStartDate))
+                .input("exceptionEndDate", sql.Date, parseDate(exceptionEndDate))
+                .input("userId", sql.Int, Number(createdBy))
+                .query(`
+        INSERT INTO [exception] (
+            coordinator_id,
+            exception_name,
+            exception_start_date,
+            exception_end_date,
+            user_id
+        )
+        OUTPUT
+            INSERTED.id,
+            INSERTED.coordinator_id,
+            INSERTED.exception_name,
+            INSERTED.exception_start_date,
+            INSERTED.exception_end_date,
+            INSERTED.user_id
+        VALUES (
+            @coordinatorId,
+            @exceptionName,
+            @exceptionStartDate,
+            @exceptionEndDate,
+            @userId
+        );
+    `);
 
             return res.status(201).json({
                 message: "Coordinator created successfully",
-                coordinator: result.recordset[0],
+                coordinator: {
+                    ...result.recordset[0],
+                    exception: addingException.recordset[0],
+                },
             });
         } catch (error) {
             console.error("Create coordinator error:", error);
