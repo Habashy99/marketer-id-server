@@ -1,0 +1,512 @@
+import { sql, poolPromise } from "../database/db.js";
+
+const CoordinatorController = {
+    getAllCoordinators: async (req, res) => {
+        try {
+            const pool = await poolPromise;
+
+            const result = await pool
+                .request()
+                .query(`
+            SELECT
+                c.*,
+                e.id AS exception_id,
+                e.exception_name,
+                e.exception_start_date,
+                e.exception_end_date
+            FROM coordinator AS c
+            LEFT JOIN [exception] AS e
+                ON e.coordinator_id = c.id
+            ORDER BY c.id, e.id;
+        `);
+
+            const coordinators = result.recordset;
+
+            return res.status(200).json({
+                message: "Get coordinators successful",
+                coordinators,
+            });
+        } catch (error) {
+            console.error("Get all coordinators error:", error);
+
+            return res.status(500).json({
+                message: "Get coordinators failed",
+            });
+        }
+    },
+    getCoordinatorById: async (req, res) => {
+        try {
+            const id = req.body.id;
+
+            if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+                return res.status(400).json({
+                    message: "Invalid coordinator ID",
+                });
+            }
+
+            const pool = await poolPromise;
+
+            const result = await pool
+                .request()
+                .input("id", sql.Int, Number(id))
+                .query("SELECT * FROM coordinator WHERE id = @id");
+
+            const coordinator = result.recordset[0];
+
+            if (!coordinator) {
+                return res.status(404).json({
+                    message: "Coordinator not found",
+                });
+            }
+
+            return res.status(200).json({
+                message: "Get coordinator by ID successful",
+                coordinator,
+            });
+        } catch (error) {
+            console.error("Get coordinator by ID error:", error);
+
+            return res.status(500).json({
+                message: "Get coordinator by ID failed",
+            });
+        }
+    },
+    createCoordinator: async (req, res) => {
+        try {
+            const code = req.body.code;
+            const name = req.body.name;
+            const job = req.body.job;
+            const companyName = req.body.companyName;
+            const healthCertificateIssuanceDate = req.body.healthCertificateIssuanceDate;
+            const healthCertificateExpiryDate = req.body.healthCertificateExpiryDate;
+            const nationalIdNumber = req.body.nationalIdNumber;
+            const mobile = req.body.mobile;
+            const governorate = req.body.governorate;
+            const notes = req.body.notes;
+            const idIssuanceDate = req.body.idIssuanceDate;
+            const idExpiryDate = req.body.idExpiryDate;
+            const createdBy = req.body.createdBy;
+            const address = req.body.address;
+            const supervisorName = req.body.supervisorName;
+            const numberOfPrintcopies = req.body.numberOfPrintcopies;
+            const securitySituation = req.body.securitySituation;
+            const profilePicture = req.body.profilePicture;
+            const nationalIdPicture = req.body.nationalIdPicture;
+            const healthCertificatePicture = req.body.healthCertificatePicture;
+            const companyAuthorizationPicture = req.body.companyAuthorizationPicture;
+            const socialInsurancePicture = req.body.socialInsurancePicture;
+            const supervisorNationalIdPicture = req.body.supervisorNationalIdPicture;
+            if (
+                code === undefined ||
+                code === null ||
+                String(code).trim() === "" ||
+                typeof name !== "string" ||
+                name.trim() === "" ||
+                createdBy === undefined ||
+                createdBy === null
+            ) {
+                return res.status(400).json({
+                    message: "Code, name, and createdBy are required",
+                });
+            }
+            const pool = await poolPromise;
+            const existingCoordinator = await pool
+                .request()
+                .input("code", sql.Int, Number(code))
+                .query("SELECT id FROM coordinator WHERE code = @code");
+
+            if (existingCoordinator.recordset.length > 0) {
+                return res.status(409).json({
+                    message: "coordinator code already exists",
+                });
+            }
+            const result = await pool
+                .request()
+                .input("code", sql.Int, Number(code))
+                .input("name", sql.NVarChar(255), name.trim())
+                .input("job", sql.NVarChar(255), job ?? null)
+                .input("companyName", sql.NVarChar(255), companyName ?? null)
+                .input(
+                    "healthCertificateIssuanceDate",
+                    sql.Date,
+                    healthCertificateIssuanceDate ?? null
+                )
+                .input(
+                    "healthCertificateExpiryDate",
+                    sql.Date,
+                    healthCertificateExpiryDate ?? null
+                )
+                .input(
+                    "nationalIdNumber",
+                    sql.NVarChar(50),
+                    nationalIdNumber ?? null
+                )
+                .input("mobile", sql.NVarChar(30), mobile ?? null)
+                .input("governorate", sql.NVarChar(100), governorate ?? null)
+                .input("notes", sql.NVarChar(sql.MAX), notes ?? null)
+                .input("idIssuanceDate", sql.Date, idIssuanceDate ?? null)
+                .input("idExpiryDate", sql.Date, idExpiryDate ?? null)
+                .input("createdBy", sql.Int, Number(createdBy))
+                .input("address", sql.NVarChar(500), address ?? null)
+                .input("supervisorName", sql.NVarChar(255), supervisorName ?? null)
+                .input(
+                    "numberOfPrintCopies",
+                    sql.Int,
+                    numberOfPrintcopies == null || numberOfPrintcopies === ""
+                        ? null
+                        : Number(numberOfPrintcopies)
+                )
+                .input(
+                    "securitySituation",
+                    sql.NVarChar(100),
+                    securitySituation ?? null
+                )
+                .input("profilePicture", sql.NVarChar(sql.MAX), profilePicture ?? null)
+                .input(
+                    "nationalIdPicture",
+                    sql.NVarChar(sql.MAX),
+                    nationalIdPicture ?? null
+                )
+                .input(
+                    "healthCertificatePicture",
+                    sql.NVarChar(sql.MAX),
+                    healthCertificatePicture ?? null
+                )
+                .input(
+                    "companyAuthorizationPicture",
+                    sql.NVarChar(sql.MAX),
+                    companyAuthorizationPicture ?? null
+                )
+                .input(
+                    "socialInsurancePicture",
+                    sql.NVarChar(sql.MAX),
+                    socialInsurancePicture ?? null
+                )
+                .input(
+                    "supervisorNationalIdPicture",
+                    sql.NVarChar(sql.MAX),
+                    supervisorNationalIdPicture ?? null
+                )
+                .query(`
+                INSERT INTO coordinator (
+                    code,
+                    name,
+                    job,
+                    company_name,
+                    health_certificate_issuance_date,
+                    health_certificate_expiry_date,
+                    national_id_number,
+                    mobile,
+                    governorate,
+                    notes,
+                    id_issuance_date,
+                    id_expiry_date,
+                    created_by,
+                    address,
+                    supervisor_name,
+                    number_of_print_copies,
+                    security_situation,
+                    profile_picture,
+                    national_id_picture,
+                    health_certificate_picture,
+                    company_authorization_picture,
+                    social_insurance_picture,
+                    supervisor_national_id_picture
+                )
+                OUTPUT
+                    INSERTED.id,
+                    INSERTED.code,
+                    INSERTED.name,
+                    INSERTED.created_by
+                VALUES (
+                    @code,
+                    @name,
+                    @job,
+                    @companyName,
+                    @healthCertificateIssuanceDate,
+                    @healthCertificateExpiryDate,
+                    @nationalIdNumber,
+                    @mobile,
+                    @governorate,
+                    @notes,
+                    @idIssuanceDate,
+                    @idExpiryDate,
+                    @createdBy,
+                    @address,
+                    @supervisorName,
+                    @numberOfPrintCopies,
+                    @securitySituation,
+                    @profilePicture,
+                    @nationalIdPicture,
+                    @healthCertificatePicture,
+                    @companyAuthorizationPicture,
+                    @socialInsurancePicture,
+                    @supervisorNationalIdPicture
+                )
+            `);
+
+            return res.status(201).json({
+                message: "Coordinator created successfully",
+                coordinator: result.recordset[0],
+            });
+        } catch (error) {
+            console.error("Create coordinator error:", error);
+
+            return res.status(500).json({
+                message: "Failed to create coordinator",
+            });
+        }
+    },
+
+
+    updateCoordinator: async (req, res) => {
+        try {
+            const { id, ...fields } = req.body;
+
+            // 1. Validate coordinator ID
+            if (
+                id === undefined ||
+                id === null ||
+                String(id).trim() === "" ||
+                !Number.isInteger(Number(id)) ||
+                Number(id) <= 0
+            ) {
+                return res.status(400).json({
+                    message: "A valid coordinator id is required",
+                });
+            }
+
+            // 2. Map API fields to database columns and SQL types
+            const columnMap = {
+                code: { column: "code", type: sql.Int },
+                name: { column: "name", type: sql.NVarChar(255) },
+                job: { column: "job", type: sql.NVarChar(255) },
+                companyName: {
+                    column: "company_name",
+                    type: sql.NVarChar(255),
+                },
+                healthCertificateIssuanceDate: {
+                    column: "health_certificate_issuance_date",
+                    type: sql.Date,
+                },
+                healthCertificateExpiryDate: {
+                    column: "health_certificate_expiry_date",
+                    type: sql.Date,
+                },
+                nationalIdNumber: {
+                    column: "national_id_number",
+                    type: sql.NVarChar(50),
+                },
+                mobile: { column: "mobile", type: sql.NVarChar(30) },
+                governorate: {
+                    column: "governorate",
+                    type: sql.NVarChar(100),
+                },
+                notes: { column: "notes", type: sql.NVarChar(sql.MAX) },
+                idIssuanceDate: {
+                    column: "id_issuance_date",
+                    type: sql.Date,
+                },
+                idExpiryDate: {
+                    column: "id_expiry_date",
+                    type: sql.Date,
+                },
+                address: { column: "address", type: sql.NVarChar(500) },
+                supervisorName: {
+                    column: "supervisor_name",
+                    type: sql.NVarChar(255),
+                },
+                numberOfPrintcopies: {
+                    column: "number_of_print_copies",
+                    type: sql.Int,
+                },
+                securitySituation: {
+                    column: "security_situation",
+                    type: sql.NVarChar(100),
+                },
+                profilePicture: {
+                    column: "profile_picture",
+                    type: sql.NVarChar(sql.MAX),
+                },
+                nationalIdPicture: {
+                    column: "national_id_picture",
+                    type: sql.NVarChar(sql.MAX),
+                },
+                healthCertificatePicture: {
+                    column: "health_certificate_picture",
+                    type: sql.NVarChar(sql.MAX),
+                },
+                companyAuthorizationPicture: {
+                    column: "company_authorization_picture",
+                    type: sql.NVarChar(sql.MAX),
+                },
+                socialInsurancePicture: {
+                    column: "social_insurance_picture",
+                    type: sql.NVarChar(sql.MAX),
+                },
+                supervisorNationalIdPicture: {
+                    column: "supervisor_national_id_picture",
+                    type: sql.NVarChar(sql.MAX),
+                },
+            };
+
+            // 3. Reject fields that cannot be updated
+            const invalidFields = Object.keys(fields).filter(
+                key => !Object.hasOwn(columnMap, key)
+            );
+
+            if (invalidFields.length > 0) {
+                return res.status(400).json({
+                    message: "Unknown or non-editable fields",
+                    fields: invalidFields,
+                });
+            }
+
+            const entries = Object.entries(fields);
+
+            if (entries.length === 0) {
+                return res.status(400).json({
+                    message: "Provide at least one field to update",
+                });
+            }
+
+            // 4. Validate field values
+            for (const [key, value] of entries) {
+                if (key === "name" &&
+                    (typeof value !== "string" || value.trim() === "")) {
+                    return res.status(400).json({
+                        message: "Name cannot be empty",
+                    });
+                }
+
+                if (key === "code" &&
+                    (value === null ||
+                        String(value).trim() === "" ||
+                        !Number.isInteger(Number(value)))) {
+                    return res.status(400).json({
+                        message: "Code must be a valid integer",
+                    });
+                }
+
+                if (
+                    key === "numberOfPrintcopies" &&
+                    value !== null &&
+                    (!Number.isInteger(Number(value)) || Number(value) < 0)
+                ) {
+                    return res.status(400).json({
+                        message: "numberOfPrintcopies must be a non-negative integer or null",
+                    });
+                }
+
+                if (
+                    ["healthCertificateIssuanceDate",
+                        "healthCertificateExpiryDate",
+                        "idIssuanceDate",
+                        "idExpiryDate"].includes(key) &&
+                    value !== null &&
+                    (typeof value !== "string" ||
+                        !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+                        Number.isNaN(Date.parse(value)) ||
+                        new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) !== value)
+                ) {
+                    return res.status(400).json({
+                        message: `${key} must be a valid date in YYYY-MM-DD format or null`,
+                    });
+                }
+            }
+
+            // 5. Get database connection
+            const pool = await poolPromise;
+
+            // 6. Check that coordinator exists
+            const existing = await pool
+                .request()
+                .input("id", sql.Int, Number(id))
+                .query(`
+                SELECT id
+                FROM coordinator
+                WHERE id = @id
+            `);
+
+            if (existing.recordset.length === 0) {
+                return res.status(404).json({
+                    message: "Coordinator not found",
+                });
+            }
+
+            // 7. Check code uniqueness only if code is being changed
+            if (Object.hasOwn(fields, "code")) {
+                const duplicate = await pool
+                    .request()
+                    .input("code", sql.Int, Number(fields.code))
+                    .input("id", sql.Int, Number(id))
+                    .query(`
+                    SELECT id
+                    FROM coordinator
+                    WHERE code = @code AND id <> @id
+                `);
+
+                if (duplicate.recordset.length > 0) {
+                    return res.status(409).json({
+                        message: "Coordinator code already exists",
+                    });
+                }
+            }
+
+            // 8. Build UPDATE query using only supplied fields
+            const request = pool.request()
+                .input("id", sql.Int, Number(id));
+
+            const setClauses = entries.map(([key, value]) => {
+                const { column, type } = columnMap[key];
+                const parameter = `value_${key}`;
+
+                let parsedValue = value;
+
+                if (key === "name") {
+                    parsedValue = value.trim();
+                }
+
+                if (
+                    ["code", "numberOfPrintcopies"].includes(key) &&
+                    value !== null
+                ) {
+                    parsedValue = Number(value);
+                }
+
+                request.input(parameter, type, parsedValue);
+
+                return `[${column}] = @${parameter}`;
+            });
+
+            const result = await request.query(`
+            UPDATE coordinator
+            SET ${setClauses.join(", ")}
+            OUTPUT INSERTED.*
+            WHERE id = @id;
+        `);
+
+            return res.status(200).json({
+                message: "Coordinator updated successfully",
+                coordinator: result.recordset[0],
+            });
+
+        } catch (error) {
+            console.error("Update coordinator error:", error);
+
+            if (error.number === 2627 || error.number === 2601) {
+                return res.status(409).json({
+                    message: "A value conflicts with a unique constraint",
+                });
+            }
+
+            return res.status(500).json({
+                message: "Failed to update coordinator",
+            });
+        }
+    },
+
+
+}
+
+export default CoordinatorController;
