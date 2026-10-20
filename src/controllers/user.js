@@ -1,0 +1,219 @@
+import { sql, poolPromise } from "../database/db.js";
+import bcrypt from "bcryptjs";
+
+const UserController = {
+    getUserById: async (req, res) => {
+        try {
+            const id = req.body.id;
+
+            if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+                return res.status(400).json({
+                    message: "Invalid user ID",
+                });
+            }
+
+            const pool = await poolPromise;
+
+            const result = await pool
+                .request()
+                .input("id", sql.Int, Number(id))
+                .query("SELECT * FROM users WHERE id = @id");
+
+            const user = result.recordset[0];
+
+            if (!user) {
+                return res.status(404).json({
+                    message: "User not found",
+                });
+            }
+
+            return res.status(200).json({
+                message: "Get user by ID successful",
+                user,
+            });
+        } catch (error) {
+            console.error("Get user by ID error:", error);
+
+            return res.status(500).json({
+                message: "Get user by ID failed",
+            });
+        }
+    },
+    getAllUsers: async (req, res) => {
+        try {
+            const pool = await poolPromise;
+
+            const result = await pool
+                .request()
+                .query("SELECT * FROM users");
+
+            const users = result.recordset;
+
+            return res.status(200).json({
+                message: "Get users successful",
+                users,
+            });
+        } catch (error) {
+            console.error("Get all users error:", error);
+
+            return res.status(500).json({
+                message: "Get users failed",
+            });
+        }
+    },
+    createUser: async (req, res) => {
+        try {
+            const code = req.body.code;
+            const name = req.body.name;
+            const password = req.body.password;
+            const createdBy = req.body.createdBy;
+            const createdAt = new Date();
+
+            if (
+                code === undefined ||
+                code === null ||
+                String(code).trim() === "" ||
+                typeof name !== "string" ||
+                name.trim() === "" ||
+                password.trim() === "" ||
+                createdBy === undefined ||
+                createdBy === null
+            ) {
+                return res.status(400).json({
+                    message: "Code, name, password, and createdBy are required",
+                });
+            }
+
+            const pool = await poolPromise;
+            const existingUser = await pool
+                .request()
+                .input("code", sql.Int, Number(code))
+                .query("SELECT id FROM users WHERE code = @code");
+
+            if (existingUser.recordset.length > 0) {
+                return res.status(409).json({
+                    message: "User code already exists",
+                });
+            }
+            const passwordHash = await bcrypt.hash(password, 12);
+            const result = await pool
+                .request()
+                .input("code", sql.Int, Number(code))
+                .input("name", sql.NVarChar(255), name.trim())
+                .input("passwordHash", sql.VarChar(255), passwordHash)
+                .input("createdBy", sql.Int, Number(createdBy))
+                .input("createdAt", sql.DateTime, createdAt)
+                .query(`
+          INSERT INTO users (code, name, password, created_by, created_at)
+          OUTPUT
+            INSERTED.id,
+            INSERTED.code,
+            INSERTED.name,
+            INSERTED.created_at,
+            INSERTED.created_by
+          VALUES (@code, @name, @passwordHash, @createdBy, @createdAt)
+        `);
+            return res.status(201).json({
+                message: "User created successfully",
+                user: result.recordset[0],
+            });
+        } catch (error) {
+            console.error("Create user error:", error);
+
+            if (error.number === 2627 || error.number === 2601) {
+                return res.status(409).json({
+                    message: "User code already exists",
+                });
+            }
+
+            if (error.number === 547) {
+                return res.status(400).json({
+                    message: "Invalid createdBy: user does not exist",
+                });
+            }
+
+            return res.status(500).json({
+                message: "Failed to create user",
+            });
+        }
+    },
+    updateUser: async (req, res) => {
+        try {
+            const id = req.body.id;
+            const name = req.body.name;
+            const password = req.body.password;
+            const updatedBy = req.body.updatedBy;
+            const updatedAt = new Date();
+            if (
+                id === undefined ||
+                id === null ||
+                name === undefined ||
+                name === null ||
+                String(name).trim() === "" ||
+                typeof name !== "string" ||
+                name.trim() === "" ||
+                password.trim() === "" ||
+                updatedBy === undefined ||
+                updatedBy === null
+            ) {
+                return res.status(400).json({
+                    message: "Id, name, password, and updatedBy are required",
+                });
+            }
+            const pool = await poolPromise;
+            const existingUser = await pool
+                .request()
+                .input("id", sql.Int, Number(id))
+                .query("SELECT id FROM users WHERE id = @id");
+
+            if (existingUser.recordset.length === 0) {
+                return res.status(404).json({
+                    message: "User not found",
+                });
+            }
+            const passwordHash = await bcrypt.hash(password, 12);
+            const result = await pool
+                .request()
+                .input("id", sql.Int, Number(id))
+                .input("name", sql.NVarChar(255), name.trim())
+                .input("passwordHash", sql.VarChar(255), passwordHash)
+                .input("updatedBy", sql.Int, Number(updatedBy))
+                .input("updatedAt", sql.DateTime, updatedAt)
+                .query(`
+                UPDATE users
+                SET
+                    name = @name,
+                    password = @passwordHash,
+                    updated_by = @updatedBy,
+                    updated_at = @updatedAt
+                OUTPUT
+                    INSERTED.id,
+                    INSERTED.code,
+                    INSERTED.name,
+                    INSERTED.updated_by,
+                    INSERTED.updated_at
+                WHERE id = @id
+            `);
+
+            return res.status(200).json({
+                message: "User updated successfully",
+                user: result.recordset[0],
+            });
+
+        } catch (error) {
+            console.error("Update user error:", error);
+
+            if (error.number === 547) {
+                return res.status(400).json({
+                    message: "Invalid updatedBy: user does not exist",
+                });
+            }
+
+            return res.status(500).json({
+                message: "Failed to update user",
+            });
+        }
+    },
+};
+
+export default UserController;
