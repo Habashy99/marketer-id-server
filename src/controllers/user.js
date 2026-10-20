@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 
 const UserController = {
 
+
     getUserById: async (req, res) => {
         try {
             const id = req.params.id ?? req.body.id;
@@ -21,8 +22,7 @@ const UserController = {
 
             const pool = await poolPromise;
 
-            const result = await pool
-                .request()
+            const result = await pool.request()
                 .input("id", sql.Int, Number(id))
                 .query(`
                 SELECT
@@ -33,16 +33,16 @@ const UserController = {
                     u.created_by,
                     u.updated_at,
                     u.updated_by,
-                    a.id AS auth_id,
+                    a.auth_number AS auth_id,
                     a.auth_number,
                     a.auth_name
                 FROM users AS u
-                LEFT JOIN auth_user AS au
+                LEFT JOIN user_auth AS au
                     ON au.user_id = u.id
                 LEFT JOIN auth AS a
-                    ON a.id = au.auth_id
+                    ON a.auth_number = au.auth_id
                 WHERE u.id = @id
-                ORDER BY a.id;
+                ORDER BY a.auth_number;
             `);
 
             if (result.recordset.length === 0) {
@@ -64,7 +64,6 @@ const UserController = {
                 auths: result.recordset
                     .filter(row => row.auth_id !== null)
                     .map(row => ({
-                        id: row.auth_id,
                         authNumber: row.auth_number,
                         authName: row.auth_name,
                     })),
@@ -85,29 +84,30 @@ const UserController = {
     },
 
 
+
     getAllUsers: async (req, res) => {
         try {
             const pool = await poolPromise;
 
             const result = await pool.request().query(`
-            SELECT
-                u.id AS user_id,
-                u.code,
-                u.name,
-                u.created_at,
-                u.created_by,
-                u.updated_at,
-                u.updated_by,
-                a.id AS auth_id,
-                a.auth_number,
-                a.auth_name
-            FROM users AS u
-            LEFT JOIN auth_user AS au
-                ON au.user_id = u.id
-            LEFT JOIN auth AS a
-                ON a.id = au.auth_id
-            ORDER BY u.id, a.id;
-        `);
+    SELECT
+        u.id AS user_id,
+        u.code,
+        u.name,
+        u.created_at,
+        u.created_by,
+        u.updated_at,
+        u.updated_by,
+        a.auth_number AS auth_id,
+        a.auth_number,
+        a.auth_name
+    FROM users AS u
+    LEFT JOIN user_auth AS au
+        ON au.user_id = u.id
+    LEFT JOIN auth AS a
+        ON a.auth_number = au.auth_id
+    ORDER BY u.id, a.auth_number;
+`);
 
             const usersMap = new Map();
 
