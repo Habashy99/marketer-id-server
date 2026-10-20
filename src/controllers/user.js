@@ -2,11 +2,18 @@ import { sql, poolPromise } from "../database/db.js";
 import bcrypt from "bcryptjs";
 
 const UserController = {
+
     getUserById: async (req, res) => {
         try {
-            const id = req.body.id;
+            const id = req.params.id ?? req.body.id;
 
-            if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+            if (
+                id === undefined ||
+                id === null ||
+                String(id).trim() === "" ||
+                !Number.isInteger(Number(id)) ||
+                Number(id) <= 0
+            ) {
                 return res.status(400).json({
                     message: "Invalid user ID",
                 });
@@ -17,50 +24,130 @@ const UserController = {
             const result = await pool
                 .request()
                 .input("id", sql.Int, Number(id))
-                .query("SELECT * FROM users WHERE id = @id");
+                .query(`
+                SELECT
+                    u.id AS user_id,
+                    u.code,
+                    u.name,
+                    u.created_at,
+                    u.created_by,
+                    u.updated_at,
+                    u.updated_by,
+                    a.id AS auth_id,
+                    a.auth_number,
+                    a.auth_name
+                FROM users AS u
+                LEFT JOIN auth_user AS au
+                    ON au.user_id = u.id
+                LEFT JOIN auth AS a
+                    ON a.id = au.auth_id
+                WHERE u.id = @id
+                ORDER BY a.id;
+            `);
 
-            const user = result.recordset[0];
-
-            if (!user) {
+            if (result.recordset.length === 0) {
                 return res.status(404).json({
                     message: "User not found",
                 });
             }
 
+            const firstRow = result.recordset[0];
+
+            const user = {
+                id: firstRow.user_id,
+                code: firstRow.code,
+                name: firstRow.name,
+                createdAt: firstRow.created_at,
+                createdBy: firstRow.created_by,
+                updatedAt: firstRow.updated_at,
+                updatedBy: firstRow.updated_by,
+                auths: result.recordset
+                    .filter(row => row.auth_id !== null)
+                    .map(row => ({
+                        id: row.auth_id,
+                        authNumber: row.auth_number,
+                        authName: row.auth_name,
+                    })),
+            };
+
             return res.status(200).json({
-                message: "Get user by ID successful",
+                message: "Get user with permissions successful",
                 user,
             });
+
         } catch (error) {
-            console.error("Get user by ID error:", error);
+            console.error("Get user with permissions error:", error);
 
             return res.status(500).json({
-                message: "Get user by ID failed",
+                message: "Failed to get user with permissions",
             });
         }
     },
+
+
     getAllUsers: async (req, res) => {
         try {
             const pool = await poolPromise;
 
-            const result = await pool
-                .request()
-                .query("SELECT * FROM users");
+            const result = await pool.request().query(`
+            SELECT
+                u.id AS user_id,
+                u.code,
+                u.name,
+                u.created_at,
+                u.created_by,
+                u.updated_at,
+                u.updated_by,
+                a.id AS auth_id,
+                a.auth_number,
+                a.auth_name
+            FROM users AS u
+            LEFT JOIN auth_user AS au
+                ON au.user_id = u.id
+            LEFT JOIN auth AS a
+                ON a.id = au.auth_id
+            ORDER BY u.id, a.id;
+        `);
 
-            const users = result.recordset;
+            const usersMap = new Map();
+
+            for (const row of result.recordset) {
+                if (!usersMap.has(row.user_id)) {
+                    usersMap.set(row.user_id, {
+                        id: row.user_id,
+                        code: row.code,
+                        name: row.name,
+                        createdAt: row.created_at,
+                        createdBy: row.created_by,
+                        updatedAt: row.updated_at,
+                        updatedBy: row.updated_by,
+                        auths: [],
+                    });
+                }
+
+                if (row.auth_id !== null) {
+                    usersMap.get(row.user_id).auths.push({
+                        id: row.auth_id,
+                        authNumber: row.auth_number,
+                        authName: row.auth_name,
+                    });
+                }
+            }
 
             return res.status(200).json({
-                message: "Get users successful",
-                users,
+                message: "Get users with permissions successful",
+                users: Array.from(usersMap.values()),
             });
+
         } catch (error) {
-            console.error("Get all users error:", error);
+            console.error("Get all users with permissions error:", error);
 
             return res.status(500).json({
-                message: "Get users failed",
+                message: "Failed to get users with permissions",
             });
         }
     },
+
     createUser: async (req, res) => {
         try {
             const code = req.body.code;
