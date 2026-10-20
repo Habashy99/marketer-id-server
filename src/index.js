@@ -3,7 +3,8 @@ import "dotenv/config";
 import { poolPromise } from "./database/db.js";
 import usersRoutes from "./routes/user.js";
 import coordinatorsRoutes from "./routes/coordinator.js";
-import authssRoutes from "./routes/auth.js";
+import authsRoutes from "./routes/auth.js";
+import authsUserRoutes from "./routes/authUser.js";
 
 const app = express();
 const port = process.env.PORT;
@@ -30,7 +31,8 @@ app.use((req, res, next) => {
 
 app.use("/users", usersRoutes);
 app.use("/coordinators", coordinatorsRoutes);
-app.use("/auths", authssRoutes);
+app.use("/auths", authsRoutes);
+app.use("/authsUser", authsUserRoutes);
 
 async function startServer() {
     try {
