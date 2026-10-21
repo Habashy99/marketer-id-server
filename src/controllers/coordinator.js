@@ -3,10 +3,9 @@ import parseDate from "../helper/parseDate.js";
 const CoordinatorController = {
     getAllCoordinators: async (req, res) => {
         try {
-            const { job } = req.body;
+            const { job, filter } = req.query;
 
             const pool = await poolPromise;
-
             const request = pool.request();
 
             let query = `
@@ -17,13 +16,28 @@ const CoordinatorController = {
                 e.exception_start_date,
                 e.exception_end_date
             FROM coordinator AS c
-            LEFT JOIN [exception] AS e
+            LEFT JOIN dbo.[exception] AS e
                 ON e.coordinator_id = c.id
         `;
 
-            if (job) {
-                query += ` WHERE c.job = @job`;
-                request.input("job", sql.NVarChar(255), job);
+            if (filter === "expired") {
+                query += `
+                WHERE
+                    LTRIM(RTRIM(c.states)) = N'غير مفعل'
+                    OR c.health_certificate_expiry_date
+                        < CAST(GETDATE() AS DATE)
+            `;
+            }
+            else if (job && job.trim() !== "") {
+                query += `
+                WHERE LTRIM(RTRIM(c.job)) = @job
+            `;
+
+                request.input(
+                    "job",
+                    sql.NVarChar(255),
+                    job.trim()
+                );
             }
 
             query += ` ORDER BY c.id;`;
@@ -40,6 +54,7 @@ const CoordinatorController = {
 
             return res.status(500).json({
                 message: "Get coordinators failed",
+                error: error.message,
             });
         }
     },
@@ -115,6 +130,7 @@ const CoordinatorController = {
             const exceptionName = req.body.exceptionName;
             const exceptionStartDate = req.body.exceptionStartDate;
             const exceptionEndDate = req.body.exceptionEndDate;
+            const state = req.body.state;
             if (
                 code === undefined ||
                 code === null ||
@@ -145,6 +161,7 @@ const CoordinatorController = {
                 .input("name", sql.NVarChar(255), name.trim())
                 .input("job", sql.NVarChar(255), job ?? null)
                 .input("companyName", sql.NVarChar(255), companyName ?? null)
+                .input("state", sql.NVarChar(100), state ?? null)
                 .input(
                     "healthCertificateIssuanceDate",
                     sql.Date,
@@ -309,8 +326,6 @@ const CoordinatorController = {
             });
         }
     },
-
-
     updateCoordinator: async (req, res) => {
         try {
             const { id, ...fields } = req.body;
