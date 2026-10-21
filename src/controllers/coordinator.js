@@ -3,29 +3,38 @@ import parseDate from "../helper/parseDate.js";
 const CoordinatorController = {
     getAllCoordinators: async (req, res) => {
         try {
+            const { job } = req.body;
+
             const pool = await poolPromise;
 
-            const result = await pool
-                .request()
-                .query(`
+            const request = pool.request();
+
+            let query = `
             SELECT
                 c.*,
-                e.id AS exception_id,
+                e.exception_id,
                 e.exception_name,
                 e.exception_start_date,
                 e.exception_end_date
             FROM coordinator AS c
             LEFT JOIN [exception] AS e
                 ON e.coordinator_id = c.id
-            ORDER BY c.id, e.id;
-        `);
+        `;
 
-            const coordinators = result.recordset;
+            if (job) {
+                query += ` WHERE c.job = @job`;
+                request.input("job", sql.NVarChar(255), job);
+            }
+
+            query += ` ORDER BY c.id;`;
+
+            const result = await request.query(query);
 
             return res.status(200).json({
                 message: "Get coordinators successful",
-                coordinators,
+                coordinators: result.recordset,
             });
+
         } catch (error) {
             console.error("Get all coordinators error:", error);
 
