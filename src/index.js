@@ -5,6 +5,7 @@ import usersRoutes from "./routes/user.js";
 import coordinatorsRoutes from "./routes/coordinator.js";
 import authsRoutes from "./routes/auth.js";
 import authsUserRoutes from "./routes/authUser.js";
+import cookieParser from "cookie-parser";
 
 const app = express();
 const port = process.env.PORT;
@@ -28,6 +29,7 @@ app.use((req, res, next) => {
     next();
 });
 
+app.use(cookieParser());
 
 app.use("/users", usersRoutes);
 app.use("/coordinators", coordinatorsRoutes);
