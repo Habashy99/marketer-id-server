@@ -1,8 +1,9 @@
 import { sql, poolPromise } from "../database/db.js";
+import createUser from "../helper/createUser.js";
+import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 
 const UserController = {
-
 
     getUserById: async (req, res) => {
         try {
@@ -83,8 +84,6 @@ const UserController = {
         }
     },
 
-
-
     getAllUsers: async (req, res) => {
         try {
             const pool = await poolPromise;
@@ -150,11 +149,7 @@ const UserController = {
 
     createUser: async (req, res) => {
         try {
-            const code = req.body.code;
-            const name = req.body.name;
-            const password = req.body.password;
-            const createdBy = req.body.createdBy;
-            const createdAt = new Date();
+            const { code, name, password, createdBy } = req.body;
 
             if (
                 code === undefined ||
@@ -162,6 +157,7 @@ const UserController = {
                 String(code).trim() === "" ||
                 typeof name !== "string" ||
                 name.trim() === "" ||
+                typeof password !== "string" ||
                 password.trim() === "" ||
                 createdBy === undefined ||
                 createdBy === null
@@ -171,43 +167,26 @@ const UserController = {
                 });
             }
 
-            const pool = await poolPromise;
-            const existingUser = await pool
-                .request()
-                .input("code", sql.Int, Number(code))
-                .query("SELECT id FROM users WHERE code = @code");
+            const user = await createUser({
+                code,
+                name,
+                password,
+                createdBy,
+            });
 
-            if (existingUser.recordset.length > 0) {
-                return res.status(409).json({
-                    message: "User code already exists",
-                });
-            }
-            const passwordHash = await bcrypt.hash(password, 12);
-            const result = await pool
-                .request()
-                .input("code", sql.Int, Number(code))
-                .input("name", sql.NVarChar(255), name.trim())
-                .input("passwordHash", sql.VarChar(255), passwordHash)
-                .input("createdBy", sql.Int, Number(createdBy))
-                .input("createdAt", sql.DateTime, createdAt)
-                .query(`
-          INSERT INTO users (code, name, password, created_by, created_at)
-          OUTPUT
-            INSERTED.id,
-            INSERTED.code,
-            INSERTED.name,
-            INSERTED.created_at,
-            INSERTED.created_by
-          VALUES (@code, @name, @passwordHash, @createdBy, @createdAt)
-        `);
             return res.status(201).json({
                 message: "User created successfully",
-                user: result.recordset[0],
+                user,
             });
+
         } catch (error) {
             console.error("Create user error:", error);
 
-            if (error.number === 2627 || error.number === 2601) {
+            if (
+                error.statusCode === 409 ||
+                error.number === 2627 ||
+                error.number === 2601
+            ) {
                 return res.status(409).json({
                     message: "User code already exists",
                 });
@@ -224,6 +203,7 @@ const UserController = {
             });
         }
     },
+
     updateUser: async (req, res) => {
         try {
             const id = req.body.id;
@@ -301,6 +281,141 @@ const UserController = {
             });
         }
     },
+
+    signup: async (req, res) => {
+        try {
+            const { code, name, password, createdBy } = req.body;
+
+            if (
+                code === undefined ||
+                code === null ||
+                String(code).trim() === "" ||
+                typeof name !== "string" ||
+                name.trim() === "" ||
+                typeof password !== "string" ||
+                password.trim() === "" ||
+                createdBy === undefined ||
+                createdBy === null
+            ) {
+                return res.status(400).json({
+                    message: "Code, name, password, and createdBy are required",
+                });
+            }
+            const user = await createUser({
+                code,
+                name,
+                password,
+                createdBy,
+            });
+
+            const token = jwt.sign(
+                { id: user.id, code: user.code },
+                process.env.JWT_SECRET,
+                { expiresIn: "11h" }
+            );
+
+            res.cookie("accessToken", token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: "lax",
+                maxAge: 15 * 60 * 1000,
+                path: "/",
+            });
+            return res.status(201).json({
+                message: "Signup successful",
+                user,
+            });
+        } catch (error) {
+            console.error("Signup error:", error);
+
+            if (error.statusCode === 409 || error.number === 2627 || error.number === 2601) {
+                return res.status(409).json({
+                    message: "User code already exists",
+                });
+            }
+
+            if (error.number === 547) {
+                return res.status(400).json({
+                    message: "Invalid createdBy: user does not exist",
+                });
+            }
+
+            return res.status(500).json({
+                message: "Signup failed",
+            });
+        }
+
+    },
+
+    login: async (req, res) => {
+        try {
+            const { code, password } = req.body;
+
+            if (
+                code === undefined ||
+                code === null ||
+                String(code).trim() === "" ||
+                typeof password !== "string" ||
+                password.trim() === ""
+            ) {
+                return res.status(400).json({
+                    message: "Code and password are required",
+                });
+            }
+
+            const pool = await poolPromise;
+
+            const result = await pool
+                .request()
+                .input("code", sql.Int, Number(code))
+                .query(`
+                SELECT id, code, name, password
+                FROM users
+                WHERE code = @code
+            `);
+
+            const user = result.recordset[0];
+
+            if (
+                !user ||
+                !(await bcrypt.compare(password, user.password))
+            ) {
+                return res.status(401).json({
+                    message: "Invalid code or password",
+                });
+            }
+
+            const token = jwt.sign(
+                { id: user.id, code: user.code },
+                process.env.JWT_SECRET,
+                { expiresIn: "11h" }
+            );
+
+            res.cookie("accessToken", token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: "lax",
+                maxAge: 15 * 60 * 1000,
+                path: "/",
+            });
+
+            return res.status(200).json({
+                message: "Login successful",
+                user: {
+                    id: user.id,
+                    code: user.code,
+                    name: user.name,
+                },
+            });
+        } catch (error) {
+            console.error("Login error:", error);
+
+            return res.status(500).json({
+                message: "Login failed",
+            });
+        }
+    },
+
 };
 
 export default UserController;
