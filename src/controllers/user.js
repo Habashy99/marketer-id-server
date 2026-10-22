@@ -84,29 +84,32 @@ const UserController = {
         }
     },
 
+
+
     getAllUsers: async (req, res) => {
         try {
             const pool = await poolPromise;
 
             const result = await pool.request().query(`
-    SELECT
-        u.id AS user_id,
-        u.code,
-        u.name,
-        u.created_at,
-        u.created_by,
-        u.updated_at,
-        u.updated_by,
-        a.auth_number AS auth_id,
-        a.auth_number,
-        a.auth_name
-    FROM users AS u
-    LEFT JOIN user_auth AS au
-        ON au.user_id = u.id
-    LEFT JOIN auth AS a
-        ON a.auth_number = au.auth_id
-    ORDER BY u.id, a.auth_number;
-`);
+           SELECT
+    u.id AS user_id,
+    u.code,
+    u.name,
+    u.type,
+    u.created_at,
+    u.created_by,
+    u.updated_at,
+    u.updated_by,
+    au.id AS assignment_id,
+    a.auth_number AS auth_id,
+    a.auth_name
+FROM dbo.users AS u
+LEFT JOIN dbo.user_auth AS au
+    ON au.user_id = u.id
+LEFT JOIN dbo.auth AS a
+    ON a.auth_number = au.auth_id
+ORDER BY u.id, a.auth_number;
+        `);
 
             const usersMap = new Map();
 
@@ -116,6 +119,7 @@ const UserController = {
                         id: row.user_id,
                         code: row.code,
                         name: row.name,
+                        type: row.type,
                         createdAt: row.created_at,
                         createdBy: row.created_by,
                         updatedAt: row.updated_at,
@@ -124,12 +128,20 @@ const UserController = {
                     });
                 }
 
-                if (row.auth_id !== null) {
-                    usersMap.get(row.user_id).auths.push({
-                        id: row.auth_id,
-                        authNumber: row.auth_number,
-                        authName: row.auth_name,
-                    });
+                if (row.assignment_id !== null) {
+                    const currentUser = usersMap.get(row.user_id);
+
+                    const alreadyExists = currentUser.auths.some(
+                        (auth) => auth.authNumber === row.auth_id
+                    );
+
+                    if (!alreadyExists) {
+                        currentUser.auths.push({
+                            id: row.assignment_id,
+                            authNumber: row.auth_id,
+                            authName: row.auth_name,
+                        });
+                    }
                 }
             }
 
@@ -137,7 +149,6 @@ const UserController = {
                 message: "Get users with permissions successful",
                 users: Array.from(usersMap.values()),
             });
-
         } catch (error) {
             console.error("Get all users with permissions error:", error);
 
@@ -146,6 +157,8 @@ const UserController = {
             });
         }
     },
+
+
 
     createUser: async (req, res) => {
         try {
@@ -407,7 +420,6 @@ const UserController = {
                     authId: row.authId,
                     authName: row.authName,
                 }));
-            debugger;
 
             const token = jwt.sign(
                 { id: user.id, code: user.code },
