@@ -84,33 +84,59 @@ const UserController = {
         }
     },
 
-
-
     getAllUsers: async (req, res) => {
         try {
-            const pool = await poolPromise;
+            const { code } = req.query;
 
-            const result = await pool.request().query(`
-           SELECT
-    u.id AS user_id,
-    u.code,
-    u.name,
-    u.type,
-    u.created_at,
-    u.created_by,
-    u.updated_at,
-    u.updated_by,
-    au.id AS assignment_id,
-    a.auth_number AS auth_id,
-    a.auth_name
-FROM dbo.users AS u
-LEFT JOIN dbo.user_auth AS au
-    ON au.user_id = u.id
-LEFT JOIN dbo.auth AS a
-    ON a.auth_number = au.auth_id
-ORDER BY u.id, a.auth_number;
+            // Validate the search code
+            if (
+                code !== undefined &&
+                (
+                    typeof code !== "string" ||
+                    code.trim().length === 0 ||
+                    code.trim().length > 50
+                )
+            ) {
+                return res.status(400).json({
+                    message: "Invalid user code",
+                });
+            }
+
+            const pool = await poolPromise;
+            const request = pool.request();
+
+            // Use NULL to return all users when no code is provided.
+            // Otherwise, search for the exact user code.
+            const searchCode =
+                code !== undefined ? code.trim() : null;
+
+            request.input("code", sql.NVarChar(50), searchCode);
+
+            const result = await request.query(`
+            SELECT
+                u.id AS user_id,
+                u.code,
+                u.name,
+                u.type,
+                u.created_at,
+                u.created_by,
+                u.updated_at,
+                u.updated_by,
+                au.id AS assignment_id,
+                a.auth_number AS auth_id,
+                a.auth_name
+            FROM dbo.users AS u
+            LEFT JOIN dbo.user_auth AS au
+                ON au.user_id = u.id
+            LEFT JOIN dbo.auth AS a
+                ON a.auth_number = au.auth_id
+            WHERE
+                @code IS NULL
+                OR CONVERT(NVARCHAR(50), u.code) = @code
+            ORDER BY u.id, a.auth_number;
         `);
 
+            // Group permissions under each user
             const usersMap = new Map();
 
             for (const row of result.recordset) {
@@ -150,15 +176,16 @@ ORDER BY u.id, a.auth_number;
                 users: Array.from(usersMap.values()),
             });
         } catch (error) {
-            console.error("Get all users with permissions error:", error);
+            console.error(
+                "Get all users with permissions error:",
+                error
+            );
 
             return res.status(500).json({
                 message: "Failed to get users with permissions",
             });
         }
     },
-
-
 
     createUser: async (req, res) => {
         try {
