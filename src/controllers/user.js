@@ -149,8 +149,8 @@ const UserController = {
 
     createUser: async (req, res) => {
         try {
-            const { code, name, password, createdBy } = req.body;
-
+            const { code, name, password, createdBy, type } = req.body;
+            
             if (
                 code === undefined ||
                 code === null ||
@@ -172,6 +172,7 @@ const UserController = {
                 name,
                 password,
                 createdBy,
+                type,
             });
 
             return res.status(201).json({
@@ -416,18 +417,18 @@ const UserController = {
         }
     },
 
-   logout: async (req, res) => {
-    res.clearCookie("accessToken", {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-    });
+    logout: async (req, res) => {
+        res.clearCookie("accessToken", {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "lax",
+            path: "/",
+        });
 
-    return res.status(200).json({
-        message: "Logged out successfully",
-    });
-},
+        return res.status(200).json({
+            message: "Logged out successfully",
+        });
+    },
 };
 
 export default UserController;
