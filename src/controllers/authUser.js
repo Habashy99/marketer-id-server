@@ -161,30 +161,54 @@ const AuthUserController = {
 
     deleteAuthUser: async (req, res) => {
         try {
-            const { id } = req.body;
+            const { code, authId } = req.body;
 
-            if (!Number.isInteger(id) || id <= 0) {
+            const userCode = Number(code);
+            const permissionId = Number(authId);
+
+            if (
+                code === undefined ||
+                code === null ||
+                String(code).trim() === "" ||
+                !Number.isInteger(userCode) ||
+                userCode <= 0 ||
+                authId === undefined ||
+                authId === null ||
+                !Number.isInteger(permissionId) ||
+                permissionId <= 0
+            ) {
                 return res.status(400).json({
-                    message: "A valid assignment id is required",
+                    message: "A valid user code and permission type are required",
+                });
+            }
+
+            const userId = await getUserIdByCode(userCode);
+
+            if (userId === null) {
+                return res.status(404).json({
+                    message: "User not found",
                 });
             }
 
             const pool = await poolPromise;
 
-            const result = await pool.request()
-                .input("id", sql.Int, id)
+            const result = await pool
+                .request()
+                .input("userId", sql.Int, userId)
+                .input("authId", sql.Int, permissionId)
                 .query(`
-                    DELETE FROM dbo.user_auth
-                    OUTPUT
-                        DELETED.id,
-                        DELETED.user_id,
-                        DELETED.auth_id
-                    WHERE id = @id;
-                `);
+                DELETE FROM dbo.user_auth
+                OUTPUT
+                    DELETED.id,
+                    DELETED.user_id,
+                    DELETED.auth_id
+                WHERE user_id = @userId
+                  AND auth_id = @authId;
+            `);
 
             if (result.recordset.length === 0) {
                 return res.status(404).json({
-                    message: "Permission assignment not found",
+                    message: "This permission is not assigned to the user",
                 });
             }
 
