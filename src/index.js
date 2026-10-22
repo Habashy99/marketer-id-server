@@ -8,6 +8,7 @@ import coordinatorsRoutes from "./routes/coordinator.js";
 import authsRoutes from "./routes/auth.js";
 import authsUserRoutes from "./routes/authUser.js";
 import dashboardRouter from "./routes/dashboard.js";
+import exceptionsRouter from "./routes/exception.js";
 
 import cookieParser from "cookie-parser";
 
@@ -25,6 +26,7 @@ app.use(cookieParser());
 app.use("/users", usersRoutes);
 app.use("/coordinators", coordinatorsRoutes);
 app.use("/auths", authsRoutes);
+app.use("/exceptions", exceptionsRouter);
 app.use("/authsUser", authsUserRoutes);
 app.use("/dashboard", dashboardRouter);
 
