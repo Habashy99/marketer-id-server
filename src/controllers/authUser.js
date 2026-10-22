@@ -1,6 +1,6 @@
 
 import { sql, poolPromise } from "../database/db.js";
-import getUserIdByCode from "../helper/getUserByCode.js";
+import getUserIdByCode from "../helper/getUserIdByCode.js";
 
 const AuthUserController = {
     createAuthUser: async (req, res) => {
