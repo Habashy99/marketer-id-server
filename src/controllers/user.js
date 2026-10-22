@@ -150,7 +150,7 @@ const UserController = {
     createUser: async (req, res) => {
         try {
             const { code, name, password, createdBy, type } = req.body;
-            
+
             if (
                 code === undefined ||
                 code === null ||
@@ -370,12 +370,25 @@ const UserController = {
                 .request()
                 .input("code", sql.Int, Number(code))
                 .query(`
-                SELECT id, code, name, password
-                FROM users
-                WHERE code = @code
+                  SELECT
+            u.id,
+            u.code,
+            u.name,
+            u.password,
+            a.auth_number AS authId,
+            a.auth_name AS authName
+        FROM dbo.users AS u
+        LEFT JOIN dbo.user_auth AS ua
+            ON ua.user_id = u.id
+        LEFT JOIN dbo.auth AS a
+            ON a.auth_number = ua.auth_id
+        WHERE u.code = @code
+        ORDER BY a.auth_number;
             `);
 
-            const user = result.recordset[0];
+            const rows = result.recordset;
+
+            const user = rows[0];
 
             if (
                 !user ||
@@ -385,6 +398,16 @@ const UserController = {
                     message: "Invalid code or password",
                 });
             }
+
+
+
+            const auths = rows
+                .filter(row => row.authId !== null)
+                .map(row => ({
+                    authId: row.authId,
+                    authName: row.authName,
+                }));
+            debugger;
 
             const token = jwt.sign(
                 { id: user.id, code: user.code },
@@ -406,6 +429,7 @@ const UserController = {
                     id: user.id,
                     code: user.code,
                     name: user.name,
+                    auths,
                 },
             });
         } catch (error) {
