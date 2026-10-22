@@ -1,20 +1,28 @@
 
 import { sql, poolPromise } from "../database/db.js";
+import getUserIdByCode from "../helper/getUserByCode.js";
 
 const AuthUserController = {
     createAuthUser: async (req, res) => {
         try {
-            const { userId, authId } = req.body;
+            const { authId, code } = req.body;
 
             if (
-                !Number.isInteger(userId) || userId <= 0 ||
+                !Number.isInteger(code) || code <= 0 ||
                 !Number.isInteger(authId) || authId <= 0
             ) {
                 return res.status(400).json({
-                    message: "Valid userId and authId are required",
+                    message: "Valid code and authId are required",
                 });
             }
 
+            const userId = await getUserIdByCode(code);
+
+            if (userId === null) {
+                return res.status(404).json({
+                    message: "User not found",
+                });
+            }
             const pool = await poolPromise;
 
             const result = await pool.request()
@@ -118,7 +126,6 @@ const AuthUserController = {
         }
     },
 
-    // DELETE: Remove a permission assignment
     deleteAuthUser: async (req, res) => {
         try {
             const { id } = req.body;
