@@ -3,10 +3,48 @@ import parseDate from "../helper/parseDate.js";
 const CoordinatorController = {
     getAllCoordinators: async (req, res) => {
         try {
-            const { job, filter } = req.query;
+            const { job, filter, code } = req.query;
+
+            if (code !== undefined) {
+                if (
+                    typeof code !== "string" ||
+                    !/^\d+$/.test(code.trim()) ||
+                    !Number.isSafeInteger(Number(code)) ||
+                    Number(code) <= 0 ||
+                    Number(code) > 2147483647
+                ) {
+                    return res.status(400).json({
+                        message: "Invalid coordinator code",
+                    });
+                }
+            }
 
             const pool = await poolPromise;
             const request = pool.request();
+
+            const conditions = [];
+
+            if (code !== undefined) {
+                request.input("code", sql.Int, Number(code.trim()));
+                conditions.push("c.code = @code");
+            }
+
+            if (filter === "expired") {
+                conditions.push(`
+                (
+                    LTRIM(RTRIM(c.states)) = N'غير مفعل'
+                    OR c.health_certificate_expiry_date
+                        < CAST(GETDATE() AS DATE)
+                )
+            `);
+            } else if (
+                job !== undefined &&
+                typeof job === "string" &&
+                job.trim() !== ""
+            ) {
+                request.input("job", sql.NVarChar(255), job.trim());
+                conditions.push("LTRIM(RTRIM(c.job)) = @job");
+            }
 
             let query = `
             SELECT
@@ -15,32 +53,18 @@ const CoordinatorController = {
                 e.exception_name,
                 e.exception_start_date,
                 e.exception_end_date
-            FROM coordinator AS c
+            FROM dbo.coordinator AS c
             LEFT JOIN dbo.[exception] AS e
                 ON e.coordinator_id = c.id
         `;
 
-            if (filter === "expired") {
+            if (conditions.length > 0) {
                 query += `
-                WHERE
-                    LTRIM(RTRIM(c.states)) = N'غير مفعل'
-                    OR c.health_certificate_expiry_date
-                        < CAST(GETDATE() AS DATE)
+                WHERE ${conditions.join(" AND ")}
             `;
             }
-            else if (job && job.trim() !== "") {
-                query += `
-                WHERE LTRIM(RTRIM(c.job)) = @job
-            `;
 
-                request.input(
-                    "job",
-                    sql.NVarChar(255),
-                    job.trim()
-                );
-            }
-
-            query += ` ORDER BY c.id;`;
+            query += " ORDER BY c.id;";
 
             const result = await request.query(query);
 
@@ -48,16 +72,15 @@ const CoordinatorController = {
                 message: "Get coordinators successful",
                 coordinators: result.recordset,
             });
-
         } catch (error) {
             console.error("Get all coordinators error:", error);
 
             return res.status(500).json({
                 message: "Get coordinators failed",
-                error: error.message,
             });
         }
     },
+
     getCoordinatorById: async (req, res) => {
         try {
             const id = req.body.id;
