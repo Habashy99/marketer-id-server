@@ -1,7 +1,8 @@
+
 import { sql, poolPromise } from "../database/db.js";
 import bcrypt from "bcryptjs";
 
-const createUser = async ({ code, name, password, createdBy }) => {
+const createUser = async ({ code, name, password, createdBy, type }) => {
     const pool = await poolPromise;
 
     const passwordHash = await bcrypt.hash(password, 12);
@@ -14,18 +15,30 @@ const createUser = async ({ code, name, password, createdBy }) => {
         .input("passwordHash", sql.VarChar(255), passwordHash)
         .input("createdBy", sql.Int, Number(createdBy))
         .input("createdAt", sql.DateTime, createdAt)
+        .input("type", sql.NVarChar(50), type)
         .query(`
-            INSERT INTO users (
-                code, name, password, created_by, created_at
+            INSERT INTO dbo.users (
+                code,
+                name,
+                password,
+                created_by,
+                created_at,
+                type
             )
             OUTPUT
                 INSERTED.id,
                 INSERTED.code,
                 INSERTED.name,
                 INSERTED.created_at AS createdAt,
-                INSERTED.created_by AS createdBy
+                INSERTED.created_by AS createdBy,
+                INSERTED.type
             VALUES (
-                @code, @name, @passwordHash, @createdBy, @createdAt
+                @code,
+                @name,
+                @passwordHash,
+                @createdBy,
+                @createdAt,
+                @type
             );
         `);
 
