@@ -9,6 +9,7 @@ import authsRoutes from "./routes/auth.js";
 import authsUserRoutes from "./routes/authUser.js";
 import dashboardRouter from "./routes/dashboard.js";
 import exceptionsRouter from "./routes/exception.js";
+import printLogRouter from "./routes/printLog.js";
 
 import cookieParser from "cookie-parser";
 
@@ -24,6 +25,7 @@ app.use(express.json());
 app.use(cookieParser());
 
 app.use("/users", usersRoutes);
+app.use("/printLog", printLogRouter);
 app.use("/coordinators", coordinatorsRoutes);
 app.use("/auths", authsRoutes);
 app.use("/exceptions", exceptionsRouter);
