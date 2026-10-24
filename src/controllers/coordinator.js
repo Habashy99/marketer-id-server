@@ -362,6 +362,7 @@ const CoordinatorController = {
         }
     },
 
+
     updateCoordinator: async (req, res) => {
         try {
             const { id, ...fields } = req.body;
@@ -372,14 +373,16 @@ const CoordinatorController = {
                 id === null ||
                 String(id).trim() === "" ||
                 !Number.isInteger(Number(id)) ||
-                Number(id) <= 0
+                Number(id) <= 0 ||
+                Number(id) > 2147483647
             ) {
                 return res.status(400).json({
                     message: "A valid coordinator id is required",
                 });
             }
 
-            // 2. Map API fields to database columns and SQL types
+            // 2. Map editable API fields to database columns.
+            // Photo columns are intentionally excluded from this update.
             const columnMap = {
                 code: { column: "code", type: sql.Int },
                 name: { column: "name", type: sql.NVarChar(255) },
@@ -427,33 +430,28 @@ const CoordinatorController = {
                     column: "security_situation",
                     type: sql.NVarChar(100),
                 },
-                profilePicture: {
-                    column: "profile_picture",
-                    type: sql.NVarChar(sql.MAX),
-                },
-                nationalIdPicture: {
-                    column: "national_id_picture",
-                    type: sql.NVarChar(sql.MAX),
-                },
-                healthCertificatePicture: {
-                    column: "health_certificate_picture",
-                    type: sql.NVarChar(sql.MAX),
-                },
-                companyAuthorizationPicture: {
-                    column: "company_authorization_picture",
-                    type: sql.NVarChar(sql.MAX),
-                },
-                socialInsurancePicture: {
-                    column: "social_insurance_picture",
-                    type: sql.NVarChar(sql.MAX),
-                },
-                supervisorNationalIdPicture: {
-                    column: "supervisor_national_id_picture",
-                    type: sql.NVarChar(sql.MAX),
+                states: {
+                    column: "states",
+                    type: sql.NVarChar(100),
                 },
             };
 
-            // 3. Reject fields that cannot be updated
+            // 3. Ignore photo fields completely for now.
+            // Existing photo paths in SQL Server will not be changed.
+            const photoFields = [
+                "profilePicture",
+                "nationalIdPicture",
+                "healthCertificatePicture",
+                "companyAuthorizationPicture",
+                "socialInsurancePicture",
+                "supervisorNationalIdPicture",
+            ];
+
+            for (const field of photoFields) {
+                delete fields[field];
+            }
+
+            // 4. Reject unknown fields
             const invalidFields = Object.keys(fields).filter(
                 key => !Object.hasOwn(columnMap, key)
             );
@@ -465,87 +463,178 @@ const CoordinatorController = {
                 });
             }
 
-            const entries = Object.entries(fields);
+            // 5. Normalize empty optional values
+            const normalizedFields = {};
 
-            if (entries.length === 0) {
-                return res.status(400).json({
-                    message: "Provide at least one field to update",
-                });
+            for (const [key, value] of Object.entries(fields)) {
+                normalizedFields[key] =
+                    typeof value === "string" && value.trim() === ""
+                        ? null
+                        : value;
             }
 
-            // 4. Validate field values
-            for (const [key, value] of entries) {
-                if (key === "name" &&
-                    (typeof value !== "string" || value.trim() === "")) {
+            // 6. Validate values
+            for (const [key, value] of Object.entries(normalizedFields)) {
+                if (
+                    key === "name" &&
+                    (value === null || typeof value !== "string")
+                ) {
                     return res.status(400).json({
                         message: "Name cannot be empty",
                     });
                 }
 
-                if (key === "code" &&
-                    (value === null ||
-                        String(value).trim() === "" ||
-                        !Number.isInteger(Number(value)))) {
+                if (
+                    key === "code" &&
+                    (
+                        value === null ||
+                        !/^\d+$/.test(String(value).trim()) ||
+                        !Number.isSafeInteger(Number(value)) ||
+                        Number(value) <= 0 ||
+                        Number(value) > 2147483647
+                    )
+                ) {
                     return res.status(400).json({
-                        message: "Code must be a valid integer",
+                        message: "Code must be a valid positive integer",
                     });
                 }
 
                 if (
                     key === "numberOfPrintcopies" &&
                     value !== null &&
-                    (!Number.isInteger(Number(value)) || Number(value) < 0)
+                    (
+                        !/^\d+$/.test(String(value).trim()) ||
+                        !Number.isSafeInteger(Number(value)) ||
+                        Number(value) < 0 ||
+                        Number(value) > 2147483647
+                    )
                 ) {
                     return res.status(400).json({
-                        message: "numberOfPrintcopies must be a non-negative integer or null",
+                        message:
+                            "numberOfPrintcopies must be a non-negative integer or null",
                     });
                 }
 
-                if (
-                    ["healthCertificateIssuanceDate",
-                        "healthCertificateExpiryDate",
-                        "idIssuanceDate",
-                        "idExpiryDate"].includes(key) &&
-                    value !== null &&
-                    (typeof value !== "string" ||
-                        !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
-                        Number.isNaN(Date.parse(value)) ||
-                        new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) !== value)
-                ) {
-                    return res.status(400).json({
-                        message: `${key} must be a valid date in YYYY-MM-DD format or null`,
-                    });
+                const dateFields = [
+                    "healthCertificateIssuanceDate",
+                    "healthCertificateExpiryDate",
+                    "idIssuanceDate",
+                    "idExpiryDate",
+                ];
+
+                if (dateFields.includes(key) && value !== null) {
+                    const validFormat =
+                        typeof value === "string" &&
+                        /^\d{4}-\d{2}-\d{2}$/.test(value);
+
+                    const parsedDate = validFormat
+                        ? new Date(`${value}T00:00:00.000Z`)
+                        : null;
+
+                    if (
+                        !parsedDate ||
+                        Number.isNaN(parsedDate.getTime()) ||
+                        parsedDate.toISOString().slice(0, 10) !== value
+                    ) {
+                        return res.status(400).json({
+                            message: `${key} must be a valid date in YYYY-MM-DD format or empty`,
+                        });
+                    }
                 }
             }
 
-            // 5. Get database connection
+            // 7. Connect to SQL Server
             const pool = await poolPromise;
 
-            // 6. Check that coordinator exists
-            const existing = await pool
+            // 8. Get the current coordinator row
+            const existingResult = await pool
                 .request()
                 .input("id", sql.Int, Number(id))
                 .query(`
-                SELECT id
-                FROM coordinator
+                SELECT *
+                FROM dbo.coordinator
                 WHERE id = @id
             `);
 
-            if (existing.recordset.length === 0) {
+            if (existingResult.recordset.length === 0) {
                 return res.status(404).json({
                     message: "Coordinator not found",
                 });
             }
 
-            // 7. Check code uniqueness only if code is being changed
-            if (Object.hasOwn(fields, "code")) {
+            const existing = existingResult.recordset[0];
+
+            // 9. Determine which supplied fields actually changed
+            const dateFields = [
+                "healthCertificateIssuanceDate",
+                "healthCertificateExpiryDate",
+                "idIssuanceDate",
+                "idExpiryDate",
+            ];
+
+            const changedEntries = Object.entries(normalizedFields).filter(
+                ([key, value]) => {
+                    const { column } = columnMap[key];
+
+                    let oldValue = existing[column];
+                    let newValue = value;
+
+                    if (dateFields.includes(key)) {
+                        oldValue = oldValue
+                            ? new Date(oldValue).toISOString().slice(0, 10)
+                            : null;
+
+                        newValue = newValue || null;
+                    } else if (
+                        ["code", "numberOfPrintcopies"].includes(key)
+                    ) {
+                        oldValue =
+                            oldValue === null || oldValue === undefined
+                                ? null
+                                : Number(oldValue);
+
+                        newValue =
+                            newValue === null ? null : Number(newValue);
+                    } else {
+                        oldValue =
+                            oldValue === null || oldValue === undefined
+                                ? null
+                                : String(oldValue);
+
+                        newValue =
+                            newValue === null
+                                ? null
+                                : String(newValue);
+
+                        if (key === "name" && newValue !== null) {
+                            newValue = newValue.trim();
+                        }
+                    }
+
+                    return oldValue !== newValue;
+                }
+            );
+
+            if (changedEntries.length === 0) {
+                return res.status(200).json({
+                    message: "No changes to update",
+                    coordinator: existing,
+                });
+            }
+
+            // 10. Check code uniqueness if the code changed
+            const codeEntry = changedEntries.find(
+                ([key]) => key === "code"
+            );
+
+            if (codeEntry) {
                 const duplicate = await pool
                     .request()
-                    .input("code", sql.Int, Number(fields.code))
+                    .input("code", sql.Int, Number(codeEntry[1]))
                     .input("id", sql.Int, Number(id))
                     .query(`
                     SELECT id
-                    FROM coordinator
+                    FROM dbo.coordinator
                     WHERE code = @code AND id <> @id
                 `);
 
@@ -556,11 +645,14 @@ const CoordinatorController = {
                 }
             }
 
-            // 8. Build UPDATE query using only supplied fields
-            const request = pool.request()
-                .input("id", sql.Int, Number(id));
+            // 11. Update only the changed columns
+            const request = pool.request().input(
+                "id",
+                sql.Int,
+                Number(id)
+            );
 
-            const setClauses = entries.map(([key, value]) => {
+            const setClauses = changedEntries.map(([key, value]) => {
                 const { column, type } = columnMap[key];
                 const parameter = `value_${key}`;
 
@@ -583,7 +675,7 @@ const CoordinatorController = {
             });
 
             const result = await request.query(`
-            UPDATE coordinator
+            UPDATE dbo.coordinator
             SET ${setClauses.join(", ")}
             OUTPUT INSERTED.*
             WHERE id = @id;
@@ -592,8 +684,8 @@ const CoordinatorController = {
             return res.status(200).json({
                 message: "Coordinator updated successfully",
                 coordinator: result.recordset[0],
+                updatedFields: changedEntries.map(([key]) => key),
             });
-
         } catch (error) {
             console.error("Update coordinator error:", error);
 
@@ -605,9 +697,11 @@ const CoordinatorController = {
 
             return res.status(500).json({
                 message: "Failed to update coordinator",
+                error: error.message,
             });
         }
     },
+
 
 
 }
