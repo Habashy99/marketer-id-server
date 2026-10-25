@@ -1,5 +1,5 @@
 
-import { sql, poolPromise } from "../database/db.js";
+import { sql, poolPromise } from "../config/db.js";
 import getUserIdByCode from "../helper/getUserIdByCode.js";
 
 const AuthUserController = {
