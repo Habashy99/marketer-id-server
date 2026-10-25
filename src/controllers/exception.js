@@ -90,105 +90,65 @@ const ExceptionController = {
     },
 
 
-    deleteException: async (req, res) => {
-        try {
-            const { coordinatorCode, exceptionName } = req.body;
+    
+deleteException: async (req, res) => {
+    try {
+        const { coordinatorId, exceptionId } = req.body.exception_id;
 
-            if (
-                !Number.isInteger(Number(coordinatorCode)) ||
-                Number(coordinatorCode) <= 0 ||
-                typeof exceptionName !== "string" ||
-                !exceptionName.trim()
-            ) {
-                return res.status(400).json({
-                    message: "يرجى إدخال رقم المنسق واسم الاستثناء بشكل صحيح.",
-                });
-            }
+        console.log("Delete exception body:", req.body);
+        console.log("coordinatorId:", coordinatorId, typeof coordinatorId);
+        console.log("exceptionId:", exceptionId, typeof exceptionId);
 
-            const pool = await poolPromise;
+        const parsedCoordinatorId = Number(coordinatorId);
+        const parsedExceptionId = Number(exceptionId);
 
-            const coordinatorResult = await pool
-                .request()
-                .input("code", sql.Int, Number(coordinatorCode))
-                .query(`
-                SELECT id
-                FROM dbo.coordinator
-                WHERE code = @code
-            `);
-
-            if (coordinatorResult.recordset.length === 0) {
-                return res.status(404).json({
-                    message: "المنسق غير موجود.",
-                });
-            }
-
-            const coordinatorId = coordinatorResult.recordset[0].id;
-
-            const exceptionResult = await pool
-                .request()
-                .input("coordinatorId", sql.Int, coordinatorId)
-                .input("exceptionName", sql.NVarChar(255), exceptionName.trim())
-                .query(`
-                SELECT TOP (2)
-                    exception_id,
-                    coordinator_id,
-                    exception_name,
-                    exception_start_date,
-                    exception_end_date
-                FROM dbo.exception
-                WHERE coordinator_id = @coordinatorId
-                  AND LTRIM(RTRIM(exception_name)) = @exceptionName
-                ORDER BY exception_id
-            `);
-
-            if (exceptionResult.recordset.length === 0) {
-                return res.status(404).json({
-                    message: "لم يتم العثور على هذا الاستثناء لهذا المنسق.",
-                });
-            }
-
-            if (exceptionResult.recordset.length > 1) {
-                return res.status(409).json({
-                    message:
-                        "يوجد أكثر من استثناء بنفس الاسم لهذا المنسق. يرجى تحديد تاريخ الاستثناء المطلوب حذفه.",
-                });
-            }
-
-            const exceptionId = exceptionResult.recordset[0].exception_id;
-
-            const deleteResult = await pool
-                .request()
-                .input("exceptionId", sql.Int, exceptionId)
-                .input("coordinatorId", sql.Int, coordinatorId)
-                .query(`
-                DELETE FROM dbo.exception
-                OUTPUT DELETED.exception_id,
-                       DELETED.coordinator_id,
-                       DELETED.exception_name,
-                       DELETED.exception_start_date,
-                       DELETED.exception_end_date
-                WHERE exception_id = @exceptionId
-                  AND coordinator_id = @coordinatorId
-            `);
-
-            if (deleteResult.recordset.length === 0) {
-                return res.status(404).json({
-                    message: "لم يتم العثور على الاستثناء المطلوب حذفه.",
-                });
-            }
-
-            return res.status(200).json({
-                message: "تم حذف الاستثناء بنجاح.",
-                exception: deleteResult.recordset[0],
-            });
-        } catch (error) {
-            console.error("Delete exception error:", error);
-
-            return res.status(500).json({
-                message: "حدث خطأ أثناء حذف الاستثناء.",
+        if (
+            !Number.isInteger(parsedCoordinatorId) ||
+            parsedCoordinatorId <= 0 ||
+            !Number.isInteger(parsedExceptionId) ||
+            parsedExceptionId <= 0
+        ) {
+            return res.status(400).json({
+                message: "يرجى اختيار المنسق والاستثناء بشكل صحيح.",
             });
         }
-    },
+
+        const pool = await poolPromise;
+
+        const result = await pool
+            .request()
+            .input("coordinatorId", sql.Int, parsedCoordinatorId)
+            .input("exceptionId", sql.Int, parsedExceptionId)
+            .query(`
+                DELETE FROM dbo.exception
+                OUTPUT
+                    DELETED.exception_id,
+                    DELETED.coordinator_id,
+                    DELETED.exception_name,
+                    DELETED.exception_start_date,
+                    DELETED.exception_end_date
+                WHERE exception_id = @exceptionId
+                  AND coordinator_id = @coordinatorId;
+            `);
+
+        if (result.recordset.length === 0) {
+            return res.status(404).json({
+                message: "الاستثناء غير موجود لهذا المنسق.",
+            });
+        }
+
+        return res.status(200).json({
+            message: "تم حذف الاستثناء بنجاح.",
+            exception: result.recordset[0],
+        });
+    } catch (error) {
+        console.error("Delete exception error:", error);
+
+        return res.status(500).json({
+            message: "حدث خطأ أثناء حذف الاستثناء.",
+        });
+    }
+},
 
 };
 
