@@ -1,8 +1,8 @@
 import express from "express";
 import cors from "cors";
 import "dotenv/config";
-import { poolPromise } from "./database/db.js";
-
+import { poolPromise } from "./config/db.js";
+import { testNextcloudConnection } from "./controllers/imageController.js";
 import usersRoutes from "./routes/user.js";
 import coordinatorsRoutes from "./routes/coordinator.js";
 import authsRoutes from "./routes/auth.js";
@@ -31,7 +31,13 @@ app.use("/auths", authsRoutes);
 app.use("/exceptions", exceptionsRouter);
 app.use("/authsUser", authsUserRoutes);
 app.use("/dashboard", dashboardRouter);
-
+testNextcloudConnection()
+    .then((result) => {
+        console.log("Nextcloud connection test:", result);
+    })
+    .catch((error) => {
+        console.error("Nextcloud connection test failed:", error.message);
+    });
 async function startServer() {
     try {
         await poolPromise;
