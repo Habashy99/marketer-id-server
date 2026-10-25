@@ -1,5 +1,9 @@
-import { sql, poolPromise } from "../database/db.js";
-import parseDate from "../helper/parseDate.js";
+import { sql, poolPromise } from "../config/db.js";
+import {
+    uploadCoordinatorPhotos,
+    deleteCoordinatorImage,
+} from "./imageController.js";
+import { COORDINATOR_PHOTO_FIELDS } from "../utils/imagePaths.js";
 const CoordinatorController = {
     getAllCoordinators: async (req, res) => {
         try {
@@ -363,7 +367,13 @@ const CoordinatorController = {
     },
 
 
+
+
+
     updateCoordinator: async (req, res) => {
+        let uploadedPhotoPaths = {};
+        let databaseUpdateSucceeded = false;
+
         try {
             const { id, ...fields } = req.body;
 
@@ -371,8 +381,8 @@ const CoordinatorController = {
             if (
                 id === undefined ||
                 id === null ||
-                String(id).trim() === "" ||
-                !Number.isInteger(Number(id)) ||
+                !/^\d+$/.test(String(id).trim()) ||
+                !Number.isSafeInteger(Number(id)) ||
                 Number(id) <= 0 ||
                 Number(id) > 2147483647
             ) {
@@ -381,8 +391,9 @@ const CoordinatorController = {
                 });
             }
 
-            // 2. Map editable API fields to database columns.
-            // Photo columns are intentionally excluded from this update.
+            const coordinatorId = Number(id);
+
+            // 2. Map editable API fields to SQL columns
             const columnMap = {
                 code: { column: "code", type: sql.Int },
                 name: { column: "name", type: sql.NVarChar(255) },
@@ -436,24 +447,9 @@ const CoordinatorController = {
                 },
             };
 
-            // 3. Ignore photo fields completely for now.
-            // Existing photo paths in SQL Server will not be changed.
-            const photoFields = [
-                "profilePicture",
-                "nationalIdPicture",
-                "healthCertificatePicture",
-                "companyAuthorizationPicture",
-                "socialInsurancePicture",
-                "supervisorNationalIdPicture",
-            ];
-
-            for (const field of photoFields) {
-                delete fields[field];
-            }
-
-            // 4. Reject unknown fields
+            // 3. Reject unknown fields
             const invalidFields = Object.keys(fields).filter(
-                key => !Object.hasOwn(columnMap, key)
+                (key) => !Object.hasOwn(columnMap, key)
             );
 
             if (invalidFields.length > 0) {
@@ -463,7 +459,7 @@ const CoordinatorController = {
                 });
             }
 
-            // 5. Normalize empty optional values
+            // 4. Normalize empty strings
             const normalizedFields = {};
 
             for (const [key, value] of Object.entries(fields)) {
@@ -473,7 +469,14 @@ const CoordinatorController = {
                         : value;
             }
 
-            // 6. Validate values
+            const dateFields = [
+                "healthCertificateIssuanceDate",
+                "healthCertificateExpiryDate",
+                "idIssuanceDate",
+                "idExpiryDate",
+            ];
+
+            // 5. Validate values
             for (const [key, value] of Object.entries(normalizedFields)) {
                 if (
                     key === "name" &&
@@ -515,13 +518,6 @@ const CoordinatorController = {
                     });
                 }
 
-                const dateFields = [
-                    "healthCertificateIssuanceDate",
-                    "healthCertificateExpiryDate",
-                    "idIssuanceDate",
-                    "idExpiryDate",
-                ];
-
                 if (dateFields.includes(key) && value !== null) {
                     const validFormat =
                         typeof value === "string" &&
@@ -537,23 +533,22 @@ const CoordinatorController = {
                         parsedDate.toISOString().slice(0, 10) !== value
                     ) {
                         return res.status(400).json({
-                            message: `${key} must be a valid date in YYYY-MM-DD format or empty`,
+                            message: `${key} must be a valid YYYY-MM-DD date or empty`,
                         });
                     }
                 }
             }
 
-            // 7. Connect to SQL Server
             const pool = await poolPromise;
 
-            // 8. Get the current coordinator row
+            // 6. Get existing coordinator and old photo paths
             const existingResult = await pool
                 .request()
-                .input("id", sql.Int, Number(id))
+                .input("id", sql.Int, coordinatorId)
                 .query(`
                 SELECT *
                 FROM dbo.coordinator
-                WHERE id = @id
+                WHERE id = @id;
             `);
 
             if (existingResult.recordset.length === 0) {
@@ -564,18 +559,16 @@ const CoordinatorController = {
 
             const existing = existingResult.recordset[0];
 
-            // 9. Determine which supplied fields actually changed
-            const dateFields = [
-                "healthCertificateIssuanceDate",
-                "healthCertificateExpiryDate",
-                "idIssuanceDate",
-                "idExpiryDate",
-            ];
+            const oldPhotoPaths = {};
 
+            for (const column of Object.values(COORDINATOR_PHOTO_FIELDS)) {
+                oldPhotoPaths[column] = existing[column];
+            }
+
+            // 7. Find actual changes in ordinary fields
             const changedEntries = Object.entries(normalizedFields).filter(
                 ([key, value]) => {
-                    const { column } = columnMap[key];
-
+                    const column = columnMap[key].column;
                     let oldValue = existing[column];
                     let newValue = value;
 
@@ -583,28 +576,20 @@ const CoordinatorController = {
                         oldValue = oldValue
                             ? new Date(oldValue).toISOString().slice(0, 10)
                             : null;
-
-                        newValue = newValue || null;
+                        newValue = newValue ?? null;
                     } else if (
-                        ["code", "numberOfPrintcopies"].includes(key)
+                        key === "code" ||
+                        key === "numberOfPrintcopies"
                     ) {
                         oldValue =
-                            oldValue === null || oldValue === undefined
-                                ? null
-                                : Number(oldValue);
-
+                            oldValue == null ? null : Number(oldValue);
                         newValue =
-                            newValue === null ? null : Number(newValue);
+                            newValue == null ? null : Number(newValue);
                     } else {
                         oldValue =
-                            oldValue === null || oldValue === undefined
-                                ? null
-                                : String(oldValue);
-
+                            oldValue == null ? null : String(oldValue);
                         newValue =
-                            newValue === null
-                                ? null
-                                : String(newValue);
+                            newValue == null ? null : String(newValue);
 
                         if (key === "name" && newValue !== null) {
                             newValue = newValue.trim();
@@ -615,14 +600,7 @@ const CoordinatorController = {
                 }
             );
 
-            if (changedEntries.length === 0) {
-                return res.status(200).json({
-                    message: "No changes to update",
-                    coordinator: existing,
-                });
-            }
-
-            // 10. Check code uniqueness if the code changed
+            // 8. Check code uniqueness
             const codeEntry = changedEntries.find(
                 ([key]) => key === "code"
             );
@@ -631,11 +609,11 @@ const CoordinatorController = {
                 const duplicate = await pool
                     .request()
                     .input("code", sql.Int, Number(codeEntry[1]))
-                    .input("id", sql.Int, Number(id))
+                    .input("id", sql.Int, coordinatorId)
                     .query(`
                     SELECT id
                     FROM dbo.coordinator
-                    WHERE code = @code AND id <> @id
+                    WHERE code = @code AND id <> @id;
                 `);
 
                 if (duplicate.recordset.length > 0) {
@@ -645,14 +623,39 @@ const CoordinatorController = {
                 }
             }
 
-            // 11. Update only the changed columns
+            // 9. Upload replacement photos
+            uploadedPhotoPaths = await uploadCoordinatorPhotos(
+                coordinatorId,
+                req.files ?? {}
+            );
+
+            // 10. Validate uploaded photo paths
+            const allowedPhotoColumns = new Set(
+                Object.values(COORDINATOR_PHOTO_FIELDS)
+            );
+
+            for (const [column, path] of Object.entries(uploadedPhotoPaths)) {
+                if (!allowedPhotoColumns.has(column)) {
+                    throw new Error(
+                        `Unexpected photo database column: ${column}`
+                    );
+                }
+
+                if (typeof path !== "string" || path.trim() === "") {
+                    throw new Error(`Invalid uploaded path for ${column}`);
+                }
+            }
+
+            // 11. Prepare SQL update
             const request = pool.request().input(
                 "id",
                 sql.Int,
-                Number(id)
+                coordinatorId
             );
 
-            const setClauses = changedEntries.map(([key, value]) => {
+            const setClauses = [];
+
+            for (const [key, value] of changedEntries) {
                 const { column, type } = columnMap[key];
                 const parameter = `value_${key}`;
 
@@ -663,17 +666,31 @@ const CoordinatorController = {
                 }
 
                 if (
-                    ["code", "numberOfPrintcopies"].includes(key) &&
+                    (key === "code" || key === "numberOfPrintcopies") &&
                     value !== null
                 ) {
                     parsedValue = Number(value);
                 }
 
                 request.input(parameter, type, parsedValue);
+                setClauses.push(`[${column}] = @${parameter}`);
+            }
 
-                return `[${column}] = @${parameter}`;
-            });
+            for (const [column, path] of Object.entries(uploadedPhotoPaths)) {
+                const parameter = `photo_${column}`;
 
+                request.input(parameter, sql.NVarChar(sql.MAX), path);
+                setClauses.push(`[${column}] = @${parameter}`);
+            }
+
+            if (setClauses.length === 0) {
+                return res.status(200).json({
+                    message: "No changes to update",
+                    coordinator: existing,
+                });
+            }
+
+            // 12. Update SQL before deleting any old images
             const result = await request.query(`
             UPDATE dbo.coordinator
             SET ${setClauses.join(", ")}
@@ -681,13 +698,68 @@ const CoordinatorController = {
             WHERE id = @id;
         `);
 
+            const updatedCoordinator = result.recordset[0];
+            databaseUpdateSucceeded = true;
+
+            // 13. Delete old files for replaced photo columns only
+            const deletionFailures = [];
+
+            for (const [column, newPath] of Object.entries(uploadedPhotoPaths)) {
+                const oldPath = oldPhotoPaths[column];
+
+                if (!oldPath || oldPath === newPath) {
+                    continue;
+                }
+
+                try {
+                    await deleteCoordinatorImage(oldPath);
+                    console.log(`Deleted old photo for ${column}:`, oldPath);
+                } catch (error) {
+                    console.error(
+                        `Failed to delete old photo for ${column}:`,
+                        oldPath,
+                        error.message
+                    );
+
+                    deletionFailures.push({
+                        column,
+                        oldPath,
+                        error: error.message,
+                    });
+                }
+            }
+
             return res.status(200).json({
                 message: "Coordinator updated successfully",
-                coordinator: result.recordset[0],
-                updatedFields: changedEntries.map(([key]) => key),
+                coordinator: updatedCoordinator,
+                updatedFields: [
+                    ...changedEntries.map(([key]) => key),
+                    ...Object.keys(uploadedPhotoPaths),
+                ],
+                ...(deletionFailures.length > 0 && {
+                    photoCleanupWarning:
+                        "The new photo was saved, but some old photos could not be deleted.",
+                    photoCleanupFailures: deletionFailures,
+                }),
             });
         } catch (error) {
             console.error("Update coordinator error:", error);
+
+            // Do not delete new photos if SQL update succeeded.
+            // They may now be referenced by the database.
+            if (!databaseUpdateSucceeded) {
+                for (const newPath of Object.values(uploadedPhotoPaths)) {
+                    try {
+                        await deleteCoordinatorImage(newPath);
+                    } catch (cleanupError) {
+                        console.error(
+                            "Failed to clean up newly uploaded photo:",
+                            newPath,
+                            cleanupError.message
+                        );
+                    }
+                }
+            }
 
             if (error.number === 2627 || error.number === 2601) {
                 return res.status(409).json({
@@ -695,12 +767,20 @@ const CoordinatorController = {
                 });
             }
 
-            return res.status(500).json({
-                message: "Failed to update coordinator",
-                error: error.message,
+            return res.status(error.status || 500).json({
+                message:
+                    error.status === 404
+                        ? error.message
+                        : "Failed to update coordinator",
+                ...(error.status !== 404 && {
+                    error: error.message,
+                }),
             });
         }
     },
+
+
+
 
 
 
