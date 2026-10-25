@@ -130,162 +130,221 @@ const CoordinatorController = {
         }
     },
 
-    createCoordinator: async (req, res) => {
-        try {
-            const {
-                code,
-                name,
-                job,
-                companyName,
-                healthCertificateIssuanceDate,
-                healthCertificateExpiryDate,
-                nationalIdNumber,
-                mobile,
-                governorate,
-                notes,
-                idIssuanceDate,
-                idExpiryDate,
-                createdBy,
-                address,
-                supervisorName,
-                numberOfPrintcopies,
-                securitySituation,
-                profilePicture,
-                nationalIdPicture,
-                healthCertificatePicture,
-                companyAuthorizationPicture,
-                socialInsurancePicture,
-                supervisorNationalIdPicture,
-                state,
-            } = req.body;
+    
+createCoordinator: async (req, res) => {
+    try {
+        const {
+            code,
+            name,
+            job,
+            company_name,
+            health_certificate_issuance_date,
+            health_certificate_expiry_date,
+            national_id_number,
+            mobile,
+            governorate,
+            notes,
+            id_issuance_date,
+            id_expiry_date,
+            created_by,
+            address,
+            supervisor_name,
+            number_of_print_copies,
+            security_situation,
+            profile_picture,
+            national_id_picture,
+            health_certificate_picture,
+            company_authorization_picture,
+            social_insurance_picture,
+            supervisor_national_id_picture,
+            states,
+        } = req.body;
 
-            if (
-                code === undefined ||
-                code === null ||
-                String(code).trim() === "" ||
-                !Number.isInteger(Number(code)) ||
-                Number(code) <= 0 ||
-                typeof name !== "string" ||
-                name.trim() === "" ||
-                companyName === undefined ||
-                companyName === null ||
-                typeof companyName !== "string" ||
-                companyName.trim() === "" ||
-                createdBy === undefined ||
-                createdBy === null ||
-                !Number.isInteger(Number(createdBy)) ||
-                Number(createdBy) <= 0
-            ) {
-                return res.status(400).json({
-                    message:
-                        "Valid code, name, companyName, and createdBy are required",
-                });
+        // 1. Validate required fields
+        if (
+            code === undefined ||
+            code === null ||
+            String(code).trim() === "" ||
+            !/^\d+$/.test(String(code).trim()) ||
+            !Number.isSafeInteger(Number(code)) ||
+            Number(code) <= 0 ||
+            Number(code) > 2147483647 ||
+            typeof name !== "string" ||
+            name.trim() === "" ||
+            typeof company_name !== "string" ||
+            company_name.trim() === "" ||
+            created_by === undefined ||
+            created_by === null ||
+            String(created_by).trim() === "" ||
+            !/^\d+$/.test(String(created_by).trim()) ||
+            !Number.isSafeInteger(Number(created_by)) ||
+            Number(created_by) <= 0 ||
+            Number(created_by) > 2147483647
+        ) {
+            return res.status(400).json({
+                message:
+                    "Valid code, name, company_name, and created_by are required",
+            });
+        }
+
+        // 2. Validate number of print copies
+        if (
+            number_of_print_copies !== undefined &&
+            number_of_print_copies !== null &&
+            number_of_print_copies !== "" &&
+            (
+                !/^\d+$/.test(String(number_of_print_copies).trim()) ||
+                !Number.isSafeInteger(Number(number_of_print_copies)) ||
+                Number(number_of_print_copies) < 0 ||
+                Number(number_of_print_copies) > 2147483647
+            )
+        ) {
+            return res.status(400).json({
+                message:
+                    "number_of_print_copies must be a non-negative integer",
+            });
+        }
+
+        // 3. Validate date formats
+        const dateFields = {
+            health_certificate_issuance_date,
+            health_certificate_expiry_date,
+            id_issuance_date,
+            id_expiry_date,
+        };
+
+        for (const [field, value] of Object.entries(dateFields)) {
+            if (value !== undefined && value !== null && value !== "") {
+                const validFormat =
+                    typeof value === "string" &&
+                    /^\d{4}-\d{2}-\d{2}$/.test(value);
+
+                const parsedDate = validFormat
+                    ? new Date(`${value}T00:00:00.000Z`)
+                    : null;
+
+                if (
+                    !parsedDate ||
+                    Number.isNaN(parsedDate.getTime()) ||
+                    parsedDate.toISOString().slice(0, 10) !== value
+                ) {
+                    return res.status(400).json({
+                        message: `${field} must be a valid YYYY-MM-DD date`,
+                    });
+                }
             }
+        }
 
-            if (
-                numberOfPrintcopies !== undefined &&
-                numberOfPrintcopies !== null &&
-                numberOfPrintcopies !== "" &&
-                (!Number.isInteger(Number(numberOfPrintcopies)) ||
-                    Number(numberOfPrintcopies) < 0)
-            ) {
-                return res.status(400).json({
-                    message: "numberOfPrintcopies must be a non-negative integer",
-                });
-            }
+        const pool = await poolPromise;
 
-            const pool = await poolPromise;
-
-            const existingCoordinator = await pool
-                .request()
-                .input("code", sql.Int, Number(code))
-                .query(`
+        // 4. Check whether the coordinator code already exists
+        const existingCoordinator = await pool
+            .request()
+            .input("code", sql.Int, Number(code))
+            .query(`
                 SELECT id
                 FROM dbo.coordinator
-                WHERE code = @code
+                WHERE code = @code;
             `);
 
-            if (existingCoordinator.recordset.length > 0) {
-                return res.status(409).json({
-                    message: "Coordinator code already exists",
-                });
-            }
+        if (existingCoordinator.recordset.length > 0) {
+            return res.status(409).json({
+                message: "Coordinator code already exists",
+            });
+        }
 
-            const result = await pool
-                .request()
-                .input("code", sql.Int, Number(code))
-                .input("name", sql.NVarChar(255), name.trim())
-                .input("job", sql.NVarChar(255), job || null)
-                .input("companyName", sql.NVarChar(255), companyName.trim())
-                .input(
-                    "healthCertificateIssuanceDate",
-                    sql.Date,
-                    healthCertificateIssuanceDate || null
-                )
-                .input(
-                    "healthCertificateExpiryDate",
-                    sql.Date,
-                    healthCertificateExpiryDate || null
-                )
-                .input(
-                    "nationalIdNumber",
-                    sql.NVarChar(50),
-                    nationalIdNumber || null
-                )
-                .input("mobile", sql.NVarChar(30), mobile || null)
-                .input("governorate", sql.NVarChar(100), governorate || null)
-                .input("notes", sql.NVarChar(sql.MAX), notes || null)
-                .input("idIssuanceDate", sql.Date, idIssuanceDate || null)
-                .input("idExpiryDate", sql.Date, idExpiryDate || null)
-                .input("createdBy", sql.Int, Number(createdBy))
-                .input("address", sql.NVarChar(500), address || null)
-                .input(
-                    "supervisorName",
-                    sql.NVarChar(255),
-                    supervisorName || null
-                )
-                .input(
-                    "numberOfPrintCopies",
-                    sql.Int,
-                    numberOfPrintcopies === "" ||
-                        numberOfPrintcopies === undefined ||
-                        numberOfPrintcopies === null
-                        ? null
-                        : Number(numberOfPrintcopies)
-                )
-                .input(
-                    "securitySituation",
-                    sql.NVarChar(100),
-                    securitySituation || null
-                )
-                .input("profilePicture", sql.NVarChar(sql.MAX), profilePicture ?? null)
-                .input(
-                    "nationalIdPicture",
-                    sql.NVarChar(sql.MAX),
-                    nationalIdPicture ?? null
-                )
-                .input(
-                    "healthCertificatePicture",
-                    sql.NVarChar(sql.MAX),
-                    healthCertificatePicture ?? null
-                )
-                .input(
-                    "companyAuthorizationPicture",
-                    sql.NVarChar(sql.MAX),
-                    companyAuthorizationPicture ?? null
-                )
-                .input(
-                    "socialInsurancePicture",
-                    sql.NVarChar(sql.MAX),
-                    socialInsurancePicture ?? null
-                )
-                .input(
-                    "supervisorNationalIdPicture",
-                    sql.NVarChar(sql.MAX),
-                    supervisorNationalIdPicture ?? null
-                )
-                .input("state", sql.NVarChar(100), state || null)
-                .query(`
+        // 5. Insert coordinator
+        const result = await pool
+            .request()
+            .input("code", sql.Int, Number(code))
+            .input("name", sql.NVarChar(255), name.trim())
+            .input("job", sql.NVarChar(255), job || null)
+            .input(
+                "companyName",
+                sql.NVarChar(255),
+                company_name.trim()
+            )
+            .input(
+                "healthCertificateIssuanceDate",
+                sql.Date,
+                health_certificate_issuance_date || null
+            )
+            .input(
+                "healthCertificateExpiryDate",
+                sql.Date,
+                health_certificate_expiry_date || null
+            )
+            .input(
+                "nationalIdNumber",
+                sql.NVarChar(50),
+                national_id_number || null
+            )
+            .input("mobile", sql.NVarChar(30), mobile || null)
+            .input(
+                "governorate",
+                sql.NVarChar(100),
+                governorate || null
+            )
+            .input("notes", sql.NVarChar(sql.MAX), notes || null)
+            .input(
+                "idIssuanceDate",
+                sql.Date,
+                id_issuance_date || null
+            )
+            .input("idExpiryDate", sql.Date, id_expiry_date || null)
+            .input("createdBy", sql.Int, Number(created_by))
+            .input("address", sql.NVarChar(500), address || null)
+            .input(
+                "supervisorName",
+                sql.NVarChar(255),
+                supervisor_name || null
+            )
+            .input(
+                "numberOfPrintCopies",
+                sql.Int,
+                number_of_print_copies === "" ||
+                number_of_print_copies === undefined ||
+                number_of_print_copies === null
+                    ? null
+                    : Number(number_of_print_copies)
+            )
+            .input(
+                "securitySituation",
+                sql.NVarChar(100),
+                security_situation || null
+            )
+            .input(
+                "profilePicture",
+                sql.NVarChar(sql.MAX),
+                profile_picture ?? null
+            )
+            .input(
+                "nationalIdPicture",
+                sql.NVarChar(sql.MAX),
+                national_id_picture ?? null
+            )
+            .input(
+                "healthCertificatePicture",
+                sql.NVarChar(sql.MAX),
+                health_certificate_picture ?? null
+            )
+            .input(
+                "companyAuthorizationPicture",
+                sql.NVarChar(sql.MAX),
+                company_authorization_picture ?? null
+            )
+            .input(
+                "socialInsurancePicture",
+                sql.NVarChar(sql.MAX),
+                social_insurance_picture ?? null
+            )
+            .input(
+                "supervisorNationalIdPicture",
+                sql.NVarChar(sql.MAX),
+                supervisor_national_id_picture ?? null
+            )
+            .input("state", sql.NVarChar(100), states || null)
+            .query(`
                 INSERT INTO dbo.coordinator (
                     code,
                     name,
@@ -317,7 +376,8 @@ const CoordinatorController = {
                     INSERTED.code,
                     INSERTED.name,
                     INSERTED.company_name,
-                    INSERTED.created_by
+                    INSERTED.created_by,
+                    INSERTED.states
                 VALUES (
                     @code,
                     @name,
@@ -343,28 +403,29 @@ const CoordinatorController = {
                     @socialInsurancePicture,
                     @supervisorNationalIdPicture,
                     @state
-                )
+                );
             `);
 
-            return res.status(201).json({
-                message: "Coordinator created successfully",
-                coordinator: result.recordset[0],
-            });
-        } catch (error) {
-            console.error("Create coordinator error:", error);
+        return res.status(201).json({
+            message: "Coordinator created successfully",
+            coordinator: result.recordset[0],
+        });
+    } catch (error) {
+        console.error("Create coordinator error:", error);
 
-            if (error.number === 2627 || error.number === 2601) {
-                return res.status(409).json({
-                    message: "Coordinator code already exists",
-                });
-            }
-
-            return res.status(500).json({
-                message: "Failed to create coordinator",
-                error: error.message,
+        if (error.number === 2627 || error.number === 2601) {
+            return res.status(409).json({
+                message: "Coordinator code already exists",
             });
         }
-    },
+
+        return res.status(500).json({
+            message: "Failed to create coordinator",
+            error: error.message,
+        });
+    }
+},
+
 
 
 
