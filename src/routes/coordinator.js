@@ -1,13 +1,29 @@
+
 import express from "express";
 import CoordinatorController from "../controllers/coordinator.js";
 import authMiddleware from "../middlewares/auth.js";
-import upload from "../middlewares/upload.js";
-
+import upload from "../middlewares/imageUploadMiddleware.js";
+import { getCoordinatorPhoto } from "../controllers/imageController.js";
 const router = express.Router();
 
-router.get("/", authMiddleware, CoordinatorController.getAllCoordinators);
-router.get("/getCoordinatorById", authMiddleware, CoordinatorController.getCoordinatorById);
-router.post("/createCoordinator", authMiddleware, CoordinatorController.createCoordinator);
+router.get(
+    "/",
+    authMiddleware,
+    CoordinatorController.getAllCoordinators
+);
+
+router.get(
+    "/getCoordinatorById",
+    authMiddleware,
+    CoordinatorController.getCoordinatorById
+);
+
+router.post(
+    "/createCoordinator",
+    authMiddleware,
+    CoordinatorController.createCoordinator
+);
+
 router.put(
     "/updateCoordinator",
     authMiddleware,
@@ -21,4 +37,16 @@ router.put(
     ]),
     CoordinatorController.updateCoordinator
 );
+router.get(
+    "/photo",
+    authMiddleware,
+    getCoordinatorPhoto
+);
+
+router.get("/photo-test", (req, res) => {
+    res.status(200).json({
+        message: "Coordinator photo route is working",
+    });
+});
+
 export default router;
