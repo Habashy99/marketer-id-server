@@ -1,5 +1,5 @@
 
-import { sql, poolPromise } from "../database/db.js";
+import { sql, poolPromise } from "../config/db.js";
 
 const ExceptionController = {
     createException: async (req, res) => {

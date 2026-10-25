@@ -1,4 +1,4 @@
-import { sql, poolPromise } from "../database/db.js";
+import { sql, poolPromise } from "../config/db.js";
 import createUser from "../helper/createUser.js";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";

@@ -1,5 +1,5 @@
 
-import { sql, poolPromise } from "../database/db.js";
+import { sql, poolPromise } from "../config/db.js";
 import bcrypt from "bcryptjs";
 
 const createUser = async ({ code, name, password, createdBy, type }) => {

@@ -1,4 +1,4 @@
-import { sql, poolPromise } from "../database/db.js";
+import { sql, poolPromise } from "../config/db.js";
 
 const getUserIdByCode = async (code) => {
     const pool = await poolPromise;

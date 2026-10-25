@@ -1,5 +1,5 @@
 
-import { poolPromise } from "../database/db.js";
+import { poolPromise } from "../config/db.js";
 
 const DashboardController = {
     getStats: async (req, res) => {
