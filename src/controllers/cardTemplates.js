@@ -29,6 +29,64 @@ function isValidDesign(design) {
 }
 
 const CardTemplateController = {
+    createDesign: async (req, res) => {
+        try {
+            const { name, design } = req.body ?? {};
+
+            if (
+                typeof name !== "string" ||
+                !name.trim() ||
+                name.trim().length > 150
+            ) {
+                return res.status(400).json({
+                    message: "Design name is required and must not exceed 150 characters.",
+                });
+            }
+
+            if (!isValidDesign(design)) {
+                return res.status(400).json({
+                    message: "Invalid design JSON.",
+                });
+            }
+
+            const pool = await poolPromise;
+
+            const result = await pool
+                .request()
+                .input("name", sql.NVarChar(150), name.trim())
+                .input(
+                    "design",
+                    sql.NVarChar(sql.MAX),
+                    JSON.stringify(design)
+                )
+                .query(`
+                INSERT INTO dbo.card_templates (name, design)
+                OUTPUT
+                    INSERTED.id,
+                    INSERTED.name,
+                    INSERTED.design
+                VALUES (@name, @design);
+            `);
+
+            const row = result.recordset[0];
+
+            return res.status(201).json({
+                message: "Design saved successfully.",
+                template: {
+                    id: row.id,
+                    name: row.name,
+                    design: JSON.parse(row.design),
+                },
+            });
+        } catch (error) {
+            console.error("Create design error:", error);
+
+            return res.status(500).json({
+                message: "Failed to save design.",
+            });
+        }
+    },
+
     getAllDesigns: async (req, res) => {
         try {
             const pool = await poolPromise;
