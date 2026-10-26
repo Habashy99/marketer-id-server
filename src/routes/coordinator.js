@@ -49,4 +49,10 @@ router.get("/photo-test", (req, res) => {
     });
 });
 
+router.get(
+    "/by-code/:code",
+    authMiddleware,
+    CoordinatorController.getCoordinatorByCode
+);
+
 export default router;
