@@ -10,6 +10,7 @@ import authsUserRoutes from "./routes/authUser.js";
 import dashboardRouter from "./routes/dashboard.js";
 import exceptionsRouter from "./routes/exception.js";
 import printLogRouter from "./routes/printLog.js";
+import cardTemplatesRouter from "./routes/cardTemplates.js";
 
 import cookieParser from "cookie-parser";
 
@@ -31,6 +32,8 @@ app.use("/auths", authsRoutes);
 app.use("/exceptions", exceptionsRouter);
 app.use("/authsUser", authsUserRoutes);
 app.use("/dashboard", dashboardRouter);
+app.use("/card-templates", cardTemplatesRouter);
+
 testNextcloudConnection()
     .then((result) => {
         console.log("Nextcloud connection test:", result);
