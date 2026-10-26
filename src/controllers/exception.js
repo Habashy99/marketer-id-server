@@ -89,37 +89,35 @@ const ExceptionController = {
         }
     },
 
+    deleteException: async (req, res) => {
+        try {
+            const { coordinatorId, exceptionId } = req.body.exception_id;
 
-    
-deleteException: async (req, res) => {
-    try {
-        const { coordinatorId, exceptionId } = req.body.exception_id;
+            console.log("Delete exception body:", req.body);
+            console.log("coordinatorId:", coordinatorId, typeof coordinatorId);
+            console.log("exceptionId:", exceptionId, typeof exceptionId);
 
-        console.log("Delete exception body:", req.body);
-        console.log("coordinatorId:", coordinatorId, typeof coordinatorId);
-        console.log("exceptionId:", exceptionId, typeof exceptionId);
+            const parsedCoordinatorId = Number(coordinatorId);
+            const parsedExceptionId = Number(exceptionId);
 
-        const parsedCoordinatorId = Number(coordinatorId);
-        const parsedExceptionId = Number(exceptionId);
+            if (
+                !Number.isInteger(parsedCoordinatorId) ||
+                parsedCoordinatorId <= 0 ||
+                !Number.isInteger(parsedExceptionId) ||
+                parsedExceptionId <= 0
+            ) {
+                return res.status(400).json({
+                    message: "يرجى اختيار المنسق والاستثناء بشكل صحيح.",
+                });
+            }
 
-        if (
-            !Number.isInteger(parsedCoordinatorId) ||
-            parsedCoordinatorId <= 0 ||
-            !Number.isInteger(parsedExceptionId) ||
-            parsedExceptionId <= 0
-        ) {
-            return res.status(400).json({
-                message: "يرجى اختيار المنسق والاستثناء بشكل صحيح.",
-            });
-        }
+            const pool = await poolPromise;
 
-        const pool = await poolPromise;
-
-        const result = await pool
-            .request()
-            .input("coordinatorId", sql.Int, parsedCoordinatorId)
-            .input("exceptionId", sql.Int, parsedExceptionId)
-            .query(`
+            const result = await pool
+                .request()
+                .input("coordinatorId", sql.Int, parsedCoordinatorId)
+                .input("exceptionId", sql.Int, parsedExceptionId)
+                .query(`
                 DELETE FROM dbo.exception
                 OUTPUT
                     DELETED.exception_id,
@@ -131,24 +129,24 @@ deleteException: async (req, res) => {
                   AND coordinator_id = @coordinatorId;
             `);
 
-        if (result.recordset.length === 0) {
-            return res.status(404).json({
-                message: "الاستثناء غير موجود لهذا المنسق.",
+            if (result.recordset.length === 0) {
+                return res.status(404).json({
+                    message: "الاستثناء غير موجود لهذا المنسق.",
+                });
+            }
+
+            return res.status(200).json({
+                message: "تم حذف الاستثناء بنجاح.",
+                exception: result.recordset[0],
+            });
+        } catch (error) {
+            console.error("Delete exception error:", error);
+
+            return res.status(500).json({
+                message: "حدث خطأ أثناء حذف الاستثناء.",
             });
         }
-
-        return res.status(200).json({
-            message: "تم حذف الاستثناء بنجاح.",
-            exception: result.recordset[0],
-        });
-    } catch (error) {
-        console.error("Delete exception error:", error);
-
-        return res.status(500).json({
-            message: "حدث خطأ أثناء حذف الاستثناء.",
-        });
-    }
-},
+    },
 
 };
 
