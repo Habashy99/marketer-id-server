@@ -31,9 +31,10 @@ const PrintLogController = {
         }
     },
 
+
     createLog: async (req, res) => {
         try {
-            const { code, name, type, created_by } = req.body;
+            const { code, name, type } = req.body;
 
             if (
                 code === undefined ||
@@ -49,6 +50,15 @@ const PrintLogController = {
                 });
             }
 
+            // Adjust this property to match your auth middleware.
+            const createdBy = req.user?.code;
+
+            if (createdBy === undefined || createdBy === null) {
+                return res.status(401).json({
+                    message: "Authenticated user not found",
+                });
+            }
+
             const pool = await poolPromise;
 
             const result = await pool
@@ -56,26 +66,20 @@ const PrintLogController = {
                 .input("code", sql.NVarChar(50), String(code).trim())
                 .input("name", sql.NVarChar(150), name.trim())
                 .input("type", sql.NVarChar(50), type.trim())
-                .input(
-                    "created_by",
-                    sql.NVarChar(100),
-                    typeof created_by === "string" && created_by.trim()
-                        ? created_by.trim()
-                        : null
-                )
+                .input("created_by", sql.NVarChar(100), String(createdBy))
                 .query(`
-                    INSERT INTO dbo.print_log
-                        (code, name, type, created_by)
-                    OUTPUT
-                        INSERTED.id,
-                        INSERTED.code,
-                        INSERTED.name,
-                        INSERTED.type,
-                        INSERTED.created_by,
-                        INSERTED.[date]
-                    VALUES
-                        (@code, @name, @type, @created_by)
-                `);
+                INSERT INTO dbo.print_log
+                    (code, name, type, created_by, [date])
+                OUTPUT
+                    INSERTED.id,
+                    INSERTED.code,
+                    INSERTED.name,
+                    INSERTED.type,
+                    INSERTED.created_by,
+                    INSERTED.[date]
+                VALUES
+                    (@code, @name, @type, @created_by, GETDATE())
+            `);
 
             return res.status(201).json({
                 message: "Log created successfully",
@@ -89,6 +93,7 @@ const PrintLogController = {
             });
         }
     },
+
 
     getLogByType: async (req, res) => {
         try {
