@@ -84,6 +84,64 @@ const UserController = {
         }
     },
 
+    getCurrentUser: async (req, res) => {
+        try {
+            const id = req.user?.id;
+
+            if (!id) {
+                return res.status(401).json({
+                    message: "Authentication required",
+                });
+            }
+
+            const pool = await poolPromise;
+
+            const result = await pool.request()
+                .input("id", sql.Int, Number(id))
+                .query(`
+                SELECT
+                    id,
+                    code,
+                    name,
+                    created_at,
+                    created_by,
+                    updated_at,
+                    updated_by,
+                    type
+                FROM dbo.users
+                WHERE id = @id;
+            `);
+
+            if (result.recordset.length === 0) {
+                return res.status(401).json({
+                    message: "User not found",
+                });
+            }
+
+            const row = result.recordset[0];
+
+            return res.status(200).json({
+                user: {
+                    id: row.id,
+                    code: row.code,
+                    name: row.name,
+                    type: row.type,
+                    createdAt: row.created_at,
+                    createdBy: row.created_by,
+                    updatedAt: row.updated_at,
+                    updatedBy: row.updated_by,
+                    auths: [],
+                },
+            });
+        } catch (error) {
+            console.error("Get current user error:", error);
+
+            return res.status(500).json({
+                message: "Failed to get current user",
+            });
+        }
+    },
+
     getAllUsers: async (req, res) => {
         try {
             const { code } = req.query;
