@@ -12,4 +12,9 @@ router.delete(
     authMiddleware,
     PrintLogController.deleteLog
 );
+router.get(
+    "/total-printed-cards",
+    authMiddleware,
+    PrintLogController.getTotalPrintedCards
+);
 export default router;
