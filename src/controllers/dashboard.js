@@ -104,6 +104,92 @@ const DashboardController = {
             });
         }
     },
+    getRecordsByCategory: async (req, res) => {
+        try {
+            const { category } = req.body;
+
+            const filters = {
+                maleRepresentatives: "normalized_job = N'مندوب'",
+                femaleRepresentatives: "normalized_job = N'مندوبة'",
+                maleCoordinators: "normalized_job = N'منسق'",
+                femaleCoordinators: "normalized_job = N'منسقة'",
+
+                expiredMaleRepresentatives: `
+                    normalized_job = N'مندوب'
+                    AND (
+                        LTRIM(RTRIM(states)) = N'غير مفعل'
+                        OR health_certificate_expiry_date < CAST(GETDATE() AS DATE)
+                    )
+                `,
+
+                expiredFemaleRepresentatives: `
+                    normalized_job = N'مندوبة'
+                    AND (
+                        LTRIM(RTRIM(states)) = N'غير مفعل'
+                        OR health_certificate_expiry_date < CAST(GETDATE() AS DATE)
+                    )
+                `,
+
+                expiredMaleCoordinators: `
+                    normalized_job = N'منسق'
+                    AND (
+                        LTRIM(RTRIM(states)) = N'غير مفعل'
+                        OR health_certificate_expiry_date < CAST(GETDATE() AS DATE)
+                    )
+                `,
+
+                expiredFemaleCoordinators: `
+                    normalized_job = N'منسقة'
+                    AND (
+                        LTRIM(RTRIM(states)) = N'غير مفعل'
+                        OR health_certificate_expiry_date < CAST(GETDATE() AS DATE)
+                    )
+                `,
+            };
+
+            if (!category || !filters[category]) {
+                return res.status(400).json({
+                    message: "Invalid dashboard category",
+                });
+            }
+
+            const pool = await poolPromise;
+
+            const result = await pool.request().query(`
+                WITH normalized AS (
+                    SELECT
+                        c.*,
+                        CASE
+                            WHEN LTRIM(RTRIM(c.job)) = N'منسق'
+                                THEN N'منسق'
+                            WHEN REPLACE(LTRIM(RTRIM(c.job)), N'ه', N'ة') = N'منسقة'
+                                THEN N'منسقة'
+                            WHEN LTRIM(RTRIM(c.job)) = N'مندوب'
+                                THEN N'مندوب'
+                            WHEN REPLACE(LTRIM(RTRIM(c.job)), N'ه', N'ة') = N'مندوبة'
+                                THEN N'مندوبة'
+                            ELSE N'غير معروف'
+                        END AS normalized_job
+                    FROM dbo.coordinator AS c
+                )
+                SELECT *
+                FROM normalized
+                WHERE ${filters[category]}
+                ORDER BY name;
+            `);
+
+            return res.status(200).json({
+                message: "Records retrieved successfully",
+                records: result.recordset,
+            });
+        } catch (error) {
+            console.error("Dashboard records error:", error);
+
+            return res.status(500).json({
+                message: "Failed to retrieve dashboard records",
+            });
+        }
+    },
 };
 
 export default DashboardController;
