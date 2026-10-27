@@ -31,8 +31,6 @@ const PrintLogController = {
         }
     },
 
-
-
     createLog: async (req, res) => {
         let transaction;
 
@@ -132,8 +130,6 @@ const PrintLogController = {
         }
     },
 
-
-
     getLogByType: async (req, res) => {
         try {
             const { type } = req.query;
@@ -230,6 +226,7 @@ const PrintLogController = {
             });
         }
     },
+
     deleteLog: async (req, res) => {
         try {
             const { id } = req.body;
@@ -278,6 +275,29 @@ const PrintLogController = {
             });
         }
     },
+    getTotalPrintedCards: async (req, res) => {
+        try {
+            const pool = await poolPromise;
+
+            const result = await pool.request().query(`
+            SELECT
+                COALESCE(SUM(number_of_print_copies), 0) AS totalPrintedCards
+            FROM dbo.coordinator
+        `);
+
+            return res.status(200).json({
+                message: "Total printed cards retrieved successfully",
+                totalPrintedCards: result.recordset[0].totalPrintedCards,
+            });
+        } catch (error) {
+            console.error("Get total printed cards error:", error);
+
+            return res.status(500).json({
+                message: "Failed to retrieve total printed cards",
+            });
+        }
+    },
+
 };
 
 export default PrintLogController;
