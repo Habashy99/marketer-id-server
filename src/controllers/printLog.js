@@ -32,7 +32,10 @@ const PrintLogController = {
     },
 
 
+
     createLog: async (req, res) => {
+        let transaction;
+
         try {
             const { code, name, type } = req.body;
 
@@ -50,7 +53,6 @@ const PrintLogController = {
                 });
             }
 
-            // Adjust this property to match your auth middleware.
             const createdBy = req.user?.code;
 
             if (createdBy === undefined || createdBy === null) {
@@ -59,11 +61,36 @@ const PrintLogController = {
                 });
             }
 
+            const normalizedCode = String(code).trim();
             const pool = await poolPromise;
 
-            const result = await pool
-                .request()
-                .input("code", sql.NVarChar(50), String(code).trim())
+            transaction = new sql.Transaction(pool);
+            await transaction.begin();
+
+            // Increment the print counter for this coordinator.
+            const updateResult = await new sql.Request(transaction)
+                .input("code", sql.NVarChar(50), normalizedCode)
+                .query(`
+                UPDATE dbo.coordinator
+                SET number_of_print_copies =
+                    ISNULL(number_of_print_copies, 0) + 1
+                WHERE code = @code;
+
+                SELECT @@ROWCOUNT AS affectedRows;
+            `);
+
+            if (updateResult.recordset[0].affectedRows === 0) {
+                await transaction.rollback();
+                transaction = null;
+
+                return res.status(404).json({
+                    message: "Coordinator not found",
+                });
+            }
+
+            // Insert the print log in the same transaction.
+            const logResult = await new sql.Request(transaction)
+                .input("code", sql.NVarChar(50), normalizedCode)
                 .input("name", sql.NVarChar(150), name.trim())
                 .input("type", sql.NVarChar(50), type.trim())
                 .input("created_by", sql.NVarChar(100), String(createdBy))
@@ -78,21 +105,33 @@ const PrintLogController = {
                     INSERTED.created_by,
                     INSERTED.[date]
                 VALUES
-                    (@code, @name, @type, @created_by, GETDATE())
+                    (@code, @name, @type, @created_by, GETDATE());
             `);
 
+            await transaction.commit();
+            transaction = null;
+
             return res.status(201).json({
-                message: "Log created successfully",
-                log: result.recordset[0],
+                message: "Print log created and counter updated successfully",
+                log: logResult.recordset[0],
             });
         } catch (error) {
+            if (transaction) {
+                try {
+                    await transaction.rollback();
+                } catch (rollbackError) {
+                    console.error("Transaction rollback error:", rollbackError);
+                }
+            }
+
             console.error("Create log error:", error);
 
             return res.status(500).json({
-                message: "Failed to create log",
+                message: "Failed to create log and update print counter",
             });
         }
     },
+
 
 
     getLogByType: async (req, res) => {
