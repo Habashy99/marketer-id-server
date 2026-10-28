@@ -1,7 +1,8 @@
 
 import jwt from "jsonwebtoken";
+import { sql, poolPromise } from "../config/db.js";
 
-const authMiddleware = (req, res, next) => {
+const authMiddleware = async (req, res, next) => {
     const token = req.cookies?.accessToken;
 
     if (!token) {
@@ -13,7 +14,36 @@ const authMiddleware = (req, res, next) => {
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        req.user = decoded;
+        if (!Number.isInteger(decoded.id) || decoded.id <= 0) {
+            return res.status(401).json({
+                message: "Invalid token. Please login again.",
+            });
+        }
+
+        const pool = await poolPromise;
+
+        const result = await pool.request()
+            .input("id", sql.Int, decoded.id)
+            .query(`
+                SELECT id, code, name, type
+                FROM dbo.users
+                WHERE id = @id;
+            `);
+
+        const user = result.recordset[0];
+
+        if (!user) {
+            return res.status(401).json({
+                message: "User no longer exists. Please login again.",
+            });
+        }
+
+        req.user = {
+            id: user.id,
+            code: user.code,
+            name: user.name,
+            type: user.type,
+        };
 
         return next();
     } catch (error) {
@@ -29,7 +59,7 @@ const authMiddleware = (req, res, next) => {
         console.error("Authentication error:", error);
 
         return res.status(500).json({
-            message: "Internal server error.",
+            message: "Authentication failed.",
         });
     }
 };

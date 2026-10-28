@@ -38,19 +38,29 @@ const AuthController = {
         }
     },
 
+
     getAllAuths: async (req, res) => {
         try {
             const pool = await poolPromise;
 
-            const result = await pool
-                .request()
-                .query("SELECT * FROM auth");
-
-            const auths = result.recordset;
+            const result = await pool.request().query(`
+            SELECT
+                a.auth_number AS authNumber,
+                a.auth_name AS authName,
+                a.parent_auth_id AS parentAuthId,
+                p.auth_name AS parentAuthName
+            FROM dbo.auth AS a
+            LEFT JOIN dbo.auth AS p
+                ON p.auth_number = a.parent_auth_id
+            ORDER BY
+                COALESCE(a.parent_auth_id, a.auth_number),
+                CASE WHEN a.parent_auth_id IS NULL THEN 0 ELSE 1 END,
+                a.auth_number;
+        `);
 
             return res.status(200).json({
                 message: "Get auths successful",
-                auths,
+                auths: result.recordset,
             });
         } catch (error) {
             console.error("Get all auths error:", error);
@@ -60,6 +70,7 @@ const AuthController = {
             });
         }
     },
+
 
     createAuth: async (req, res) => {
         try {

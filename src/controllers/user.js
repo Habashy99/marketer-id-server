@@ -146,7 +146,6 @@ const UserController = {
         try {
             const { code } = req.query;
 
-            // Validate the search code
             if (
                 code !== undefined &&
                 (
@@ -163,8 +162,6 @@ const UserController = {
             const pool = await poolPromise;
             const request = pool.request();
 
-            // Use NULL to return all users when no code is provided.
-            // Otherwise, search for the exact user code.
             const searchCode =
                 code !== undefined ? code.trim() : null;
 
@@ -180,21 +177,43 @@ const UserController = {
                 u.created_by,
                 u.updated_at,
                 u.updated_by,
+
                 au.id AS assignment_id,
+
                 a.auth_number AS auth_id,
-                a.auth_name
+                a.auth_name AS auth_name,
+                a.parent_auth_id AS parent_auth_id,
+
+                parent.auth_name AS parent_auth_name,
+                parent.parent_auth_id AS grandparent_auth_id,
+
+                grandparent.auth_name AS grandparent_auth_name
+
             FROM dbo.users AS u
+
             LEFT JOIN dbo.user_auth AS au
                 ON au.user_id = u.id
+
             LEFT JOIN dbo.auth AS a
                 ON a.auth_number = au.auth_id
+
+            LEFT JOIN dbo.auth AS parent
+                ON parent.auth_number = a.parent_auth_id
+
+            LEFT JOIN dbo.auth AS grandparent
+                ON grandparent.auth_number = parent.parent_auth_id
+
             WHERE
                 @code IS NULL
                 OR CONVERT(NVARCHAR(50), u.code) = @code
-            ORDER BY u.id, a.auth_number;
+
+            ORDER BY
+                u.id,
+                grandparent.auth_number,
+                parent.auth_number,
+                a.auth_number;
         `);
 
-            // Group permissions under each user
             const usersMap = new Map();
 
             for (const row of result.recordset) {
@@ -212,7 +231,7 @@ const UserController = {
                     });
                 }
 
-                if (row.assignment_id !== null) {
+                if (row.assignment_id !== null && row.auth_id !== null) {
                     const currentUser = usersMap.get(row.user_id);
 
                     const alreadyExists = currentUser.auths.some(
@@ -224,6 +243,12 @@ const UserController = {
                             id: row.assignment_id,
                             authNumber: row.auth_id,
                             authName: row.auth_name,
+
+                            parentAuthId: row.parent_auth_id,
+                            parentAuthName: row.parent_auth_name,
+
+                            grandparentAuthId: row.grandparent_auth_id,
+                            grandparentAuthName: row.grandparent_auth_name,
                         });
                     }
                 }
@@ -234,10 +259,7 @@ const UserController = {
                 users: Array.from(usersMap.values()),
             });
         } catch (error) {
-            console.error(
-                "Get all users with permissions error:",
-                error
-            );
+            console.error("Get all users with permissions error:", error);
 
             return res.status(500).json({
                 message: "Failed to get users with permissions",
@@ -462,52 +484,71 @@ const UserController = {
                 });
             }
 
+            const numericCode = Number(code);
+
+            if (!Number.isSafeInteger(numericCode) || numericCode <= 0) {
+                return res.status(400).json({
+                    message: "Invalid code",
+                });
+            }
+
             const pool = await poolPromise;
 
             const result = await pool
                 .request()
-                .input("code", sql.Int, Number(code))
+                .input("code", sql.Int, numericCode)
                 .query(`
-                  SELECT
-            u.id,
-            u.code,
-            u.name,
-            u.password,
-            a.auth_number AS authId,
-            a.auth_name AS authName
-        FROM dbo.users AS u
-        LEFT JOIN dbo.user_auth AS ua
-            ON ua.user_id = u.id
-        LEFT JOIN dbo.auth AS a
-            ON a.auth_number = ua.auth_id
-        WHERE u.code = @code
-        ORDER BY a.auth_number;
+                SELECT
+                    u.id,
+                    u.code,
+                    u.name,
+                    u.password,
+                    u.type,
+                    a.auth_number AS authId,
+                    a.auth_name AS authName,
+                    a.parent_auth_id AS parentAuthId
+                FROM dbo.users AS u
+                LEFT JOIN dbo.user_auth AS ua
+                    ON ua.user_id = u.id
+                LEFT JOIN dbo.auth AS a
+                    ON a.auth_number = ua.auth_id
+                WHERE u.code = @code
+                ORDER BY a.auth_number;
             `);
 
             const rows = result.recordset;
-
-            const user = rows[0];
+            const dbUser = rows[0];
 
             if (
-                !user ||
-                !(await bcrypt.compare(password, user.password))
+                !dbUser ||
+                !(await bcrypt.compare(password, dbUser.password))
             ) {
                 return res.status(401).json({
                     message: "Invalid code or password",
                 });
             }
 
-
-
             const auths = rows
-                .filter(row => row.authId !== null)
-                .map(row => ({
+                .filter((row) => row.authId !== null)
+                .map((row) => ({
                     authId: row.authId,
                     authName: row.authName,
+                    parentAuthId: row.parentAuthId,
                 }));
 
+            const user = {
+                id: dbUser.id,
+                code: dbUser.code,
+                name: dbUser.name,
+                type: dbUser.type,
+                auths,
+            };
+
             const token = jwt.sign(
-                { id: user.id, code: user.code },
+                {
+                    id: user.id,
+                    code: user.code,
+                },
                 process.env.JWT_SECRET,
                 { expiresIn: "11h" }
             );
@@ -522,12 +563,7 @@ const UserController = {
 
             return res.status(200).json({
                 message: "Login successful",
-                user: {
-                    id: user.id,
-                    code: user.code,
-                    name: user.name,
-                    auths,
-                },
+                user,
             });
         } catch (error) {
             console.error("Login error:", error);
