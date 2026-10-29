@@ -2,7 +2,13 @@ import { sql, poolPromise } from "../config/db.js";
 import createUser from "../helper/createUser.js";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-
+const cookieOptions = {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+    maxAge: 11 * 60 * 60 * 1000,
+    path: "/",
+};
 const UserController = {
 
     getUserById: async (req, res) => {
@@ -435,13 +441,8 @@ const UserController = {
                 { expiresIn: "11h" }
             );
 
-            res.cookie("accessToken", token, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === "production",
-                sameSite: "lax",
-                maxAge: 11 * 60 * 60 * 1000,
-                path: "/",
-            });
+            res.cookie("accessToken", token, cookieOptions);
+
             return res.status(201).json({
                 message: "Signup successful",
                 user,
@@ -518,11 +519,21 @@ const UserController = {
 
             const rows = result.recordset;
             const dbUser = rows[0];
-
+            const passwordMatches = dbUser
+                ? await bcrypt.compare(password, dbUser.password)
+                : false;
+            console.log("Login diagnostic:", {
+                code: numericCode,
+                userFound: Boolean(dbUser),
+                passwordIsString: typeof dbUser?.password === "string",
+                passwordHashLength:
+                    typeof dbUser?.password === "string"
+                        ? dbUser.password.length
+                        : null,
+            });
             if (
                 !dbUser ||
-                !(await bcrypt.compare(password, dbUser.password))
-            ) {
+                !passwordMatches) {
                 return res.status(401).json({
                     message: "Invalid code or password",
                 });
@@ -552,14 +563,7 @@ const UserController = {
                 process.env.JWT_SECRET,
                 { expiresIn: "11h" }
             );
-
-            res.cookie("accessToken", token, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === "production",
-                sameSite: "lax",
-                maxAge: 11 * 60 * 60 * 1000,
-                path: "/",
-            });
+            res.cookie("accessToken", token, cookieOptions);
 
             return res.status(200).json({
                 message: "Login successful",
@@ -570,6 +574,7 @@ const UserController = {
 
             return res.status(500).json({
                 message: "Login failed",
+                error: error.message,
             });
         }
     },

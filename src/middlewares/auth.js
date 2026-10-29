@@ -3,23 +3,55 @@ import jwt from "jsonwebtoken";
 import { sql, poolPromise } from "../config/db.js";
 
 const authMiddleware = async (req, res, next) => {
+    console.log("Auth diagnostic:", {
+        path: req.originalUrl,
+        origin: req.headers.origin,
+        host: req.headers.host,
+        cookieHeaderPresent: Boolean(req.headers.cookie),
+        cookieNames: Object.keys(req.cookies || {}),
+        accessTokenPresent: Boolean(req.cookies?.accessToken),
+    });
     const token = req.cookies?.accessToken;
 
     if (!token) {
+        console.warn("Authentication failed: accessToken cookie is missing", {
+            path: req.originalUrl,
+            origin: req.headers.origin,
+        });
+
         return res.status(401).json({
             message: "Authentication required. Please login.",
         });
     }
 
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    let decoded;
 
-        if (!Number.isInteger(decoded.id) || decoded.id <= 0) {
+    try {
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+        if (
+            error.name === "TokenExpiredError" ||
+            error.name === "JsonWebTokenError"
+        ) {
             return res.status(401).json({
-                message: "Invalid token. Please login again.",
+                message: "Invalid or expired token. Please login again.",
             });
         }
 
+        console.error("JWT verification error:", error);
+
+        return res.status(500).json({
+            message: "Authentication failed.",
+        });
+    }
+
+    if (!Number.isInteger(decoded.id) || decoded.id <= 0) {
+        return res.status(401).json({
+            message: "Invalid token. Please login again.",
+        });
+    }
+
+    try {
         const pool = await poolPromise;
 
         const result = await pool.request()
@@ -47,16 +79,7 @@ const authMiddleware = async (req, res, next) => {
 
         return next();
     } catch (error) {
-        if (
-            error.name === "TokenExpiredError" ||
-            error.name === "JsonWebTokenError"
-        ) {
-            return res.status(401).json({
-                message: "Invalid or expired token. Please login again.",
-            });
-        }
-
-        console.error("Authentication error:", error);
+        console.error("Authentication database error:", error);
 
         return res.status(500).json({
             message: "Authentication failed.",
