@@ -137,6 +137,7 @@ const CoordinatorController = {
                 name,
                 job,
                 company_name,
+                email_discount,
                 health_certificate_issuance_date,
                 health_certificate_expiry_date,
                 national_id_number,
@@ -259,6 +260,11 @@ const CoordinatorController = {
                     company_name.trim()
                 )
                 .input(
+                    "emailDiscount",
+                    sql.NVarChar(100),
+                    email_discount?.trim() || "لا"
+                )
+                .input(
                     "healthCertificateIssuanceDate",
                     sql.Date,
                     health_certificate_issuance_date || null
@@ -344,6 +350,7 @@ const CoordinatorController = {
                     name,
                     job,
                     company_name,
+                    email_discount,
                     health_certificate_issuance_date,
                     health_certificate_expiry_date,
                     national_id_number,
@@ -377,6 +384,7 @@ const CoordinatorController = {
                     @name,
                     @job,
                     @companyName,
+                    @emailDiscount,
                     @healthCertificateIssuanceDate,
                     @healthCertificateExpiryDate,
                     @nationalIdNumber,
@@ -449,6 +457,10 @@ const CoordinatorController = {
                 companyName: {
                     column: "company_name",
                     type: sql.NVarChar(255),
+                },
+                emailDiscount: {
+                    column: "email_discount",
+                    type: sql.NVarChar(100),
                 },
                 healthCertificateIssuanceDate: {
                     column: "health_certificate_issuance_date",
