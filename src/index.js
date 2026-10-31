@@ -17,6 +17,8 @@ import printLogRouter from "./routes/printLog.js";
 import cardTemplatesRouter from "./routes/cardTemplates.js";
 import cardLogsRouter from "./routes/cardLogs.js";
 import cookieParser from "cookie-parser";
+import temporaryCoordinator from "./routes/temporaryCoordinator.js";
+import advertisingCompany from "./routes/advertisingCompany.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -70,6 +72,8 @@ app.use("/authsUser", authsUserRoutes);
 app.use("/dashboard", dashboardRouter);
 app.use("/card-templates", cardTemplatesRouter);
 app.use("/card-logs", cardLogsRouter);
+app.use("/temporary-coordinators", temporaryCoordinator);
+app.use("/advertising-companies", advertisingCompany);
 
 const frontendDistPath = process.env.FRONTEND_DIST_PATH;
 
