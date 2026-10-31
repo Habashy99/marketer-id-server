@@ -1,9 +1,6 @@
 
 import multer from "multer";
 
-// Keep uploaded files in memory.
-// The controller currently ignores photo updates, so no files
-// will be saved to disk by this middleware.
 const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, callback) => {

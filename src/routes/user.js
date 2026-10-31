@@ -6,14 +6,14 @@ import adminMiddleware from "../middlewares/adminMiddleware.js";
 
 const router = express.Router();
 
-// Authentication
+
 router.post("/login", UserController.login);
 router.post("/logout", UserController.logout);
 
-// Current logged-in user
+
 router.get("/me", authMiddleware, UserController.getCurrentUser);
 
-// User management: admin only
+
 router.get(
     "/",
     authMiddleware,
@@ -42,8 +42,6 @@ router.put(
     UserController.updateUser
 );
 
-// Keep signup only if public registration is intentionally allowed.
-// Otherwise, remove this route and create accounts through createUser.
 router.post("/signup", UserController.signup);
 
 export default router;

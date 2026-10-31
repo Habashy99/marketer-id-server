@@ -29,7 +29,6 @@ async function createFolder(path) {
             timeout: 15000,
         });
     } catch (error) {
-        // WebDAV returns 405 when the collection already exists.
         if (error.response?.status !== 405) {
             throw error;
         }
@@ -70,6 +69,5 @@ export async function uploadCoordinatorImage(
         maxBodyLength: 20 * 1024 * 1024,
     });
 
-    // Save this relative path in SQL Server.
     return relativePath;
 }

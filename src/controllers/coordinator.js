@@ -159,7 +159,6 @@ const CoordinatorController = {
                 states,
             } = req.body;
 
-            // 1. Validate required fields
             if (
                 code === undefined ||
                 code === null ||
@@ -186,7 +185,6 @@ const CoordinatorController = {
                 });
             }
 
-            // 2. Validate number of print copies
             if (
                 number_of_print_copies !== undefined &&
                 number_of_print_copies !== null &&
@@ -204,7 +202,6 @@ const CoordinatorController = {
                 });
             }
 
-            // 3. Validate date formats
             const dateFields = {
                 health_certificate_issuance_date,
                 health_certificate_expiry_date,
@@ -236,7 +233,6 @@ const CoordinatorController = {
 
             const pool = await poolPromise;
 
-            // 4. Check whether the coordinator code already exists
             const existingCoordinator = await pool
                 .request()
                 .input("code", sql.Int, Number(code))
@@ -252,7 +248,6 @@ const CoordinatorController = {
                 });
             }
 
-            // 5. Insert coordinator
             const result = await pool
                 .request()
                 .input("code", sql.Int, Number(code))
@@ -432,7 +427,6 @@ const CoordinatorController = {
         try {
             const { id, ...fields } = req.body;
 
-            // 1. Validate coordinator ID
             if (
                 id === undefined ||
                 id === null ||
@@ -448,7 +442,6 @@ const CoordinatorController = {
 
             const coordinatorId = Number(id);
 
-            // 2. Map editable API fields to SQL columns
             const columnMap = {
                 code: { column: "code", type: sql.Int },
                 name: { column: "name", type: sql.NVarChar(255) },
@@ -502,7 +495,6 @@ const CoordinatorController = {
                 },
             };
 
-            // 3. Reject unknown fields
             const invalidFields = Object.keys(fields).filter(
                 (key) => !Object.hasOwn(columnMap, key)
             );
@@ -513,8 +505,6 @@ const CoordinatorController = {
                     fields: invalidFields,
                 });
             }
-
-            // 4. Normalize empty strings
             const normalizedFields = {};
 
             for (const [key, value] of Object.entries(fields)) {
@@ -531,7 +521,6 @@ const CoordinatorController = {
                 "idExpiryDate",
             ];
 
-            // 5. Validate values
             for (const [key, value] of Object.entries(normalizedFields)) {
                 if (
                     key === "name" &&
@@ -596,7 +585,6 @@ const CoordinatorController = {
 
             const pool = await poolPromise;
 
-            // 6. Get existing coordinator and old photo paths
             const existingResult = await pool
                 .request()
                 .input("id", sql.Int, coordinatorId)
@@ -620,7 +608,6 @@ const CoordinatorController = {
                 oldPhotoPaths[column] = existing[column];
             }
 
-            // 7. Find actual changes in ordinary fields
             const changedEntries = Object.entries(normalizedFields).filter(
                 ([key, value]) => {
                     const column = columnMap[key].column;
@@ -655,7 +642,6 @@ const CoordinatorController = {
                 }
             );
 
-            // 8. Check code uniqueness
             const codeEntry = changedEntries.find(
                 ([key]) => key === "code"
             );
@@ -678,13 +664,11 @@ const CoordinatorController = {
                 }
             }
 
-            // 9. Upload replacement photos
             uploadedPhotoPaths = await uploadCoordinatorPhotos(
                 coordinatorId,
                 req.files ?? {}
             );
 
-            // 10. Validate uploaded photo paths
             const allowedPhotoColumns = new Set(
                 Object.values(COORDINATOR_PHOTO_FIELDS)
             );
@@ -701,7 +685,6 @@ const CoordinatorController = {
                 }
             }
 
-            // 11. Prepare SQL update
             const request = pool.request().input(
                 "id",
                 sql.Int,
@@ -745,7 +728,6 @@ const CoordinatorController = {
                 });
             }
 
-            // 12. Update SQL before deleting any old images
             const result = await request.query(`
             UPDATE dbo.coordinator
             SET ${setClauses.join(", ")}
@@ -756,7 +738,6 @@ const CoordinatorController = {
             const updatedCoordinator = result.recordset[0];
             databaseUpdateSucceeded = true;
 
-            // 13. Delete old files for replaced photo columns only
             const deletionFailures = [];
 
             for (const [column, newPath] of Object.entries(uploadedPhotoPaths)) {
@@ -800,8 +781,6 @@ const CoordinatorController = {
         } catch (error) {
             console.error("Update coordinator error:", error);
 
-            // Do not delete new photos if SQL update succeeded.
-            // They may now be referenced by the database.
             if (!databaseUpdateSucceeded) {
                 for (const newPath of Object.values(uploadedPhotoPaths)) {
                     try {

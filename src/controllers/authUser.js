@@ -64,7 +64,6 @@ const AuthUserController = {
                 });
             }
 
-            // Validate that every requested permission exists.
             const permissionParams = permissionIds
                 .map((_, index) => `@auth${index}`)
                 .join(", ");

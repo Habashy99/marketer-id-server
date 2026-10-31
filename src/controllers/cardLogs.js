@@ -7,7 +7,6 @@ const CardLogsController = {
         try {
             const { fromDate, toDate } = req.query;
 
-            // A date range must include both dates.
             if ((fromDate && !toDate) || (!fromDate && toDate)) {
                 return res.status(400).json({
                     message: "يجب إرسال تاريخ البداية وتاريخ النهاية معاً",
@@ -75,7 +74,6 @@ const CardLogsController = {
             });
         }
     },
-
 
     createLog: async (req, res) => {
         try {

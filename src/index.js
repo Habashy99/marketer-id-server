@@ -71,7 +71,6 @@ app.use("/dashboard", dashboardRouter);
 app.use("/card-templates", cardTemplatesRouter);
 app.use("/card-logs", cardLogsRouter);
 
-// Serve the built React frontend in the packaged Electron app.
 const frontendDistPath = process.env.FRONTEND_DIST_PATH;
 
 if (frontendDistPath) {
@@ -87,7 +86,6 @@ if (frontendDistPath) {
             res.sendFile(frontendIndexPath);
         });
 
-        // Support React Router routes such as /dashboard and /users.
         app.get("/{*path}", (req, res, next) => {
             if (
                 req.path.startsWith("/users/") ||

@@ -38,7 +38,6 @@ const AuthController = {
         }
     },
 
-
     getAllAuths: async (req, res) => {
         try {
             const pool = await poolPromise;
@@ -70,7 +69,6 @@ const AuthController = {
             });
         }
     },
-
 
     createAuth: async (req, res) => {
         try {

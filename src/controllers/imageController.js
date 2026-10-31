@@ -99,7 +99,6 @@ async function ensureNextcloudFolder(folderPath) {
 
         if (response.status === 201) continue;
 
-        // Another request may have created the folder concurrently.
         if (
             response.status === 405 &&
             await nextcloudFolderExists(url)
@@ -175,7 +174,6 @@ export async function uploadCoordinatorImage(
         throw new Error("The processed image buffer is empty.");
     }
 
-    // Prevent coordinator codes from creating nested or unsafe paths.
     if (
         coordinatorCode.includes("/") ||
         coordinatorCode.includes("\\") ||
@@ -251,7 +249,6 @@ export async function uploadCoordinatorPhotos(
 
         return uploadedPaths;
     } catch (error) {
-        // Avoid leaving newly uploaded files behind if a later upload fails.
         await Promise.allSettled(
             Object.values(uploadedPaths).map(deleteCoordinatorImage)
         );
