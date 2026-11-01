@@ -7,7 +7,14 @@ import { COORDINATOR_PHOTO_FIELDS } from "../utils/imagePaths.js";
 const CoordinatorController = {
     getAllCoordinators: async (req, res) => {
         try {
-            const { job, filter, code } = req.query;
+            const {
+                job,
+                filter,
+                code,
+                company,
+                advertisingCompanyId,
+                branch,
+            } = req.query;
 
             if (code !== undefined) {
                 if (
@@ -25,12 +32,16 @@ const CoordinatorController = {
 
             const pool = await poolPromise;
             const request = pool.request();
-
             const conditions = [];
 
             if (code !== undefined) {
                 request.input("code", sql.Int, Number(code.trim()));
                 conditions.push("c.code = @code");
+            }
+
+            if (job && job.trim()) {
+                request.input("job", sql.NVarChar(255), job.trim());
+                conditions.push("LTRIM(RTRIM(c.job)) = @job");
             }
 
             if (filter === "expired") {
@@ -41,31 +52,58 @@ const CoordinatorController = {
                         < CAST(GETDATE() AS DATE)
                 )
             `);
-            } else if (
-                job !== undefined &&
-                typeof job === "string" &&
-                job.trim() !== ""
-            ) {
-                request.input("job", sql.NVarChar(255), job.trim());
-                conditions.push("LTRIM(RTRIM(c.job)) = @job");
+            }
+
+            if (company && company.trim()) {
+                request.input(
+                    "company",
+                    sql.NVarChar(255),
+                    `%${company.trim()}%`
+                );
+                conditions.push("c.company_name LIKE @company");
+            }
+
+            if (advertisingCompanyId) {
+                const id = Number(advertisingCompanyId);
+
+                if (!Number.isInteger(id) || id <= 0) {
+                    return res.status(400).json({
+                        message: "Invalid advertising company ID",
+                    });
+                }
+
+                request.input("advertisingCompanyId", sql.Int, id);
+                conditions.push(
+                    "c.advertising_company_id = @advertisingCompanyId"
+                );
+            }
+
+            if (branch && branch.trim()) {
+                request.input(
+                    "branch",
+                    sql.NVarChar(255),
+                    `%${branch.trim()}%`
+                );
+                conditions.push("c.branch LIKE @branch");
             }
 
             let query = `
             SELECT
                 c.*,
+                ac.name AS advertising_company_name,
                 e.exception_id,
                 e.exception_name,
                 e.exception_start_date,
                 e.exception_end_date
             FROM dbo.coordinator AS c
+            LEFT JOIN dbo.advertising_companies AS ac
+                ON ac.id = c.advertising_company_id
             LEFT JOIN dbo.[exception] AS e
                 ON e.coordinator_id = c.id
         `;
 
             if (conditions.length > 0) {
-                query += `
-                WHERE ${conditions.join(" AND ")}
-            `;
+                query += ` WHERE ${conditions.join(" AND ")}`;
             }
 
             query += " ORDER BY c.id;";
@@ -456,6 +494,14 @@ const CoordinatorController = {
                 job: { column: "job", type: sql.NVarChar(255) },
                 companyName: {
                     column: "company_name",
+                    type: sql.NVarChar(255),
+                },
+                advertisingCompanyId: {
+                    column: "advertising_company_id",
+                    type: sql.Int,
+                },
+                branch: {
+                    column: "branch",
                     type: sql.NVarChar(255),
                 },
                 emailDiscount: {
