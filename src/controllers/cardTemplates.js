@@ -92,10 +92,11 @@ const CardTemplateController = {
             const pool = await poolPromise;
 
             const result = await pool.request().query(`
-                SELECT id, name, design
-                FROM dbo.card_templates
-                ORDER BY id DESC;
-            `);
+            SELECT id, name, design
+            FROM dbo.card_templates
+            WHERE isdeleted = 0
+            ORDER BY id DESC;
+        `);
 
             const templates = result.recordset.map((row) => {
                 let design;
@@ -142,10 +143,11 @@ const CardTemplateController = {
                 .request()
                 .input("id", sql.Int, id)
                 .query(`
-                    SELECT id, name, design
-                    FROM dbo.card_templates
-                    WHERE id = @id;
-                `);
+                SELECT id, name, design
+                FROM dbo.card_templates
+                WHERE id = @id
+                  AND isdeleted = 0;
+            `);
 
             if (result.recordset.length === 0) {
                 return res.status(404).json({
@@ -181,7 +183,6 @@ const CardTemplateController = {
             });
         }
     },
-
     editDesign: async (req, res) => {
         try {
             const id = Number(req.params.id);
@@ -273,10 +274,12 @@ const CardTemplateController = {
                 .request()
                 .input("id", sql.Int, id)
                 .query(`
-                    DELETE FROM dbo.card_templates
-                    OUTPUT DELETED.id
-                    WHERE id = @id;
-                `);
+                UPDATE dbo.card_templates
+                SET isdeleted = 1
+                OUTPUT INSERTED.id
+                WHERE id = @id
+                  AND isdeleted = 0;
+            `);
 
             if (result.recordset.length === 0) {
                 return res.status(404).json({
@@ -288,6 +291,7 @@ const CardTemplateController = {
                 message: "Design deleted successfully.",
                 id: result.recordset[0].id,
             });
+
         } catch (error) {
             console.error("Delete design error:", error);
 

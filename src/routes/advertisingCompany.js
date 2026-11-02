@@ -23,5 +23,10 @@ router.delete(
     authMiddleware,
     AdvertisingCompany.deleteAdvertisingCompany
 );
+router.get(
+    "/search",
+    authMiddleware,
+    AdvertisingCompany.searchAdvertisingCompanies
+);
 
 export default router;

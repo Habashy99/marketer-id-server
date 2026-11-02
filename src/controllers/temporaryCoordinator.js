@@ -1,9 +1,110 @@
+
 import sql from "mssql";
-import { poolPromise } from "../config/db.js";
+import { poolPromise, retailPoolPromise } from "../config/db.js";
+
+// ==========================================
+// GET SUPPLIER AND BRANCH NAMES
+// ==========================================
+
+async function getRetailNames(coordinators) {
+    if (!coordinators.length) return [];
+
+    const retailPool = await retailPoolPromise;
+
+    if (!retailPool) {
+        throw new Error("Retail database unavailable.");
+    }
+
+    const supplierIds = [
+        ...new Set(
+            coordinators
+                .map((item) => Number(item.mother_company))
+                .filter((id) => Number.isSafeInteger(id) && id > 0)
+        ),
+    ];
+
+    const branchIds = [
+        ...new Set(
+            coordinators
+                .map((item) => Number(item.branch))
+                .filter((id) => Number.isSafeInteger(id) && id > 0)
+        ),
+    ];
+
+    const supplierMap = new Map();
+    const branchMap = new Map();
+
+    // Get supplier names
+    if (supplierIds.length > 0) {
+        const request = retailPool.request();
+
+        const params = supplierIds.map((id, index) => {
+            const key = `supplier${index}`;
+            request.input(key, sql.Int, id);
+            return `@${key}`;
+        });
+
+        const result = await request.query(`
+            SELECT
+                supplierno AS id,
+                LTRIM(RTRIM(a_name)) AS name
+            FROM dbo.sys_supplier
+            WHERE supplierno IN (${params.join(",")});
+        `);
+
+        result.recordset.forEach((item) => {
+            supplierMap.set(String(item.id), item.name);
+        });
+    }
+
+    // Get branch names
+    if (branchIds.length > 0) {
+        const request = retailPool.request();
+
+        const params = branchIds.map((id, index) => {
+            const key = `branch${index}`;
+            request.input(key, sql.Int, id);
+            return `@${key}`;
+        });
+
+        const result = await request.query(`
+            SELECT
+                branch AS id,
+                LTRIM(RTRIM(a_name)) AS name
+            FROM dbo.sys_branch
+            WHERE branch IN (${params.join(",")});
+        `);
+
+        result.recordset.forEach((item) => {
+            branchMap.set(String(item.id), item.name);
+        });
+    }
+
+    return coordinators.map((item) => ({
+        ...item,
+
+        mother_company_name:
+            supplierMap.get(String(item.mother_company)) ??
+            item.mother_company ??
+            "-",
+
+        branch_name:
+            branchMap.get(String(item.branch)) ??
+            item.branch ??
+            "-",
+    }));
+}
+
+// ==========================================
+// TEMPORARY COORDINATOR CONTROLLER
+// ==========================================
 
 const TemporaryCoordinatorController = {
 
+    // ==========================================
     // CREATE
+    // ==========================================
+
     createTemporaryCoordinator: async (req, res) => {
         try {
             const {
@@ -18,10 +119,14 @@ const TemporaryCoordinatorController = {
 
             // Validate required fields
             if (
-                !name?.trim() ||
-                !mother_company?.trim() ||
-                !national_id_number?.trim() ||
-                !branch?.trim() ||
+                typeof name !== "string" ||
+                !name.trim() ||
+                typeof mother_company !== "string" ||
+                !mother_company.trim() ||
+                typeof national_id_number !== "string" ||
+                !national_id_number.trim() ||
+                typeof branch !== "string" ||
+                !branch.trim() ||
                 !advertising_company_id ||
                 !from_date ||
                 !to_date
@@ -56,130 +161,52 @@ const TemporaryCoordinatorController = {
 
             const pool = await poolPromise;
 
+            // Insert coordinator
             const result = await pool
                 .request()
                 .input("name", sql.NVarChar(150), name.trim())
-                .input("mother_company", sql.NVarChar(150), mother_company.trim())
+                .input(
+                    "mother_company",
+                    sql.NVarChar(150),
+                    mother_company.trim()
+                )
                 .input("advertising_company_id", sql.Int, companyId)
-                .input("national_id_number", sql.NVarChar(20), national_id_number.trim())
+                .input(
+                    "national_id_number",
+                    sql.NVarChar(20),
+                    national_id_number.trim()
+                )
                 .input("branch", sql.NVarChar(150), branch.trim())
                 .input("from_date", sql.Date, from_date)
                 .input("to_date", sql.Date, to_date)
                 .query(`
-                INSERT INTO dbo.temporary_coordinator (
-                    name,
-                    mother_company,
-                    advertising_company_id,
-                    national_id_number,
-                    branch,
-                    from_date,
-                    to_date
-                )
-                OUTPUT INSERTED.id
-                VALUES (
-                    @name,
-                    @mother_company,
-                    @advertising_company_id,
-                    @national_id_number,
-                    @branch,
-                    @from_date,
-                    @to_date
-                );
-            `);
+                    INSERT INTO dbo.temporary_coordinator (
+                        name,
+                        mother_company,
+                        advertising_company_id,
+                        national_id_number,
+                        branch,
+                        from_date,
+                        to_date
+                    )
+                    OUTPUT INSERTED.id
+                    VALUES (
+                        @name,
+                        @mother_company,
+                        @advertising_company_id,
+                        @national_id_number,
+                        @branch,
+                        @from_date,
+                        @to_date
+                    );
+                `);
 
             const newId = result.recordset[0].id;
 
-            // Return the created coordinator with advertising company name
+            // Get created coordinator
             const coordinatorResult = await pool
                 .request()
                 .input("id", sql.Int, newId)
-                .query(`
-                SELECT
-                    tc.id,
-                    tc.name,
-                    tc.mother_company,
-                    tc.advertising_company_id,
-                    ac.name AS advertising_company,
-                    tc.national_id_number,
-                    tc.branch,
-                    tc.from_date,
-                    tc.to_date
-                FROM dbo.temporary_coordinator AS tc
-                LEFT JOIN dbo.advertising_companies AS ac
-                    ON ac.id = tc.advertising_company_id
-                WHERE tc.id = @id;
-            `);
-
-            return res.status(201).json({
-                message: "Temporary coordinator created successfully.",
-                coordinator: coordinatorResult.recordset[0],
-            });
-        } catch (error) {
-            console.error("createTemporaryCoordinator:", error);
-
-            if (error.number === 547) {
-                return res.status(400).json({
-                    message: "The selected advertising company does not exist.",
-                });
-            }
-
-            return res.status(500).json({
-                message: "Failed to create temporary coordinator.",
-            });
-        }
-    },
-
-    // GET ALL
-    getAllTemporaryCoordinators: async (req, res) => {
-        try {
-            const pool = await poolPromise;
-
-            const result = await pool.request().query(`
-                SELECT
-                    tc.id,
-                    tc.name,
-                    tc.mother_company,
-                    tc.advertising_company_id,
-                    ac.name AS advertising_company,
-                    tc.national_id_number,
-                    tc.branch,
-                    tc.from_date,
-                    tc.to_date
-                FROM dbo.temporary_coordinator AS tc
-                LEFT JOIN dbo.advertising_companies AS ac
-                    ON ac.id = tc.advertising_company_id
-                ORDER BY tc.id DESC;
-            `);
-
-            return res.status(200).json({
-                message: "Temporary coordinators retrieved successfully.",
-                coordinators: result.recordset,
-            });
-        } catch (error) {
-            console.error("getAllTemporaryCoordinators:", error);
-
-            return res.status(500).json({
-                message: "Failed to retrieve temporary coordinators.",
-            });
-        }
-    },
-
-    // GET BY ID
-    getTemporaryCoordinatorById: async (req, res) => {
-        try {
-            const { id } = req.params;
-
-            if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
-                return res.status(400).json({
-                    message: "Invalid temporary coordinator ID.",
-                });
-            }
-
-            const pool = await poolPromise;
-
-            const result = await pool
-                .request()
-                .input("id", sql.Int, Number(id))
                 .query(`
                     SELECT
                         tc.id,
@@ -197,16 +224,125 @@ const TemporaryCoordinatorController = {
                     WHERE tc.id = @id;
                 `);
 
+            // Resolve supplier and branch names
+            const coordinators = await getRetailNames(
+                coordinatorResult.recordset
+            );
+
+            return res.status(201).json({
+                message: "Temporary coordinator created successfully.",
+                coordinator: coordinators[0],
+            });
+
+        } catch (error) {
+            console.error("createTemporaryCoordinator:", error);
+
+            if (error.number === 547) {
+                return res.status(400).json({
+                    message: "The selected advertising company does not exist.",
+                });
+            }
+
+            return res.status(500).json({
+                message: "Failed to create temporary coordinator.",
+            });
+        }
+    },
+
+    // ==========================================
+    // GET ALL
+    // ==========================================
+
+    getAllTemporaryCoordinators: async (req, res) => {
+        try {
+            const pool = await poolPromise;
+
+            const result = await pool.request().query(`
+            SELECT
+                tc.id,
+                tc.name,
+                tc.mother_company,
+                tc.advertising_company_id,
+                ac.name AS advertising_company,
+                tc.national_id_number,
+                tc.branch,
+                tc.from_date,
+                tc.to_date
+            FROM dbo.temporary_coordinator AS tc
+            LEFT JOIN dbo.advertising_companies AS ac
+                ON ac.id = tc.advertising_company_id
+                AND ac.isdeleted = 0
+            WHERE tc.isdeleted = 0
+            ORDER BY tc.id DESC;
+        `);
+
+            const coordinators = await getRetailNames(result.recordset);
+
+            return res.status(200).json({
+                message: "Temporary coordinators retrieved successfully.",
+                coordinators,
+            });
+
+        } catch (error) {
+            console.error("getAllTemporaryCoordinators:", error);
+
+            return res.status(500).json({
+                message: "Failed to retrieve temporary coordinators.",
+            });
+        }
+    },
+
+    // ==========================================
+    // GET BY ID
+    // ==========================================
+
+    getTemporaryCoordinatorById: async (req, res) => {
+        try {
+            const { id } = req.params;
+
+            if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+                return res.status(400).json({
+                    message: "Invalid temporary coordinator ID.",
+                });
+            }
+
+            const pool = await poolPromise;
+
+            const result = await pool
+                .request()
+                .input("id", sql.Int, Number(id))
+                .query(`
+                SELECT
+                    tc.id,
+                    tc.name,
+                    tc.mother_company,
+                    tc.advertising_company_id,
+                    ac.name AS advertising_company,
+                    tc.national_id_number,
+                    tc.branch,
+                    tc.from_date,
+                    tc.to_date
+                FROM dbo.temporary_coordinator AS tc
+                LEFT JOIN dbo.advertising_companies AS ac
+                    ON ac.id = tc.advertising_company_id
+                    AND ac.isdeleted = 0
+                WHERE tc.id = @id
+                  AND tc.isdeleted = 0;
+            `);
+
             if (result.recordset.length === 0) {
                 return res.status(404).json({
                     message: "Temporary coordinator not found.",
                 });
             }
 
+            const coordinators = await getRetailNames(result.recordset);
+
             return res.status(200).json({
                 message: "Temporary coordinator retrieved successfully.",
-                coordinator: result.recordset[0],
+                coordinator: coordinators[0],
             });
+
         } catch (error) {
             console.error("getTemporaryCoordinatorById:", error);
 
@@ -216,7 +352,10 @@ const TemporaryCoordinatorController = {
         }
     },
 
+    // ==========================================
     // UPDATE
+    // ==========================================
+
     updateTemporaryCoordinator: async (req, res) => {
         try {
             const { id } = req.params;
@@ -269,7 +408,8 @@ const TemporaryCoordinatorController = {
             };
 
             const updates = Object.entries(fields).filter(
-                ([key]) => Object.prototype.hasOwnProperty.call(req.body, key)
+                ([key]) =>
+                    Object.prototype.hasOwnProperty.call(req.body, key)
             );
 
             if (updates.length === 0) {
@@ -278,7 +418,7 @@ const TemporaryCoordinatorController = {
                 });
             }
 
-            // Validate required text fields when provided.
+            // Validate text fields
             for (const key of [
                 "name",
                 "mother_company",
@@ -287,8 +427,10 @@ const TemporaryCoordinatorController = {
             ]) {
                 if (
                     Object.prototype.hasOwnProperty.call(req.body, key) &&
-                    (typeof req.body[key] !== "string" ||
-                        !req.body[key].trim())
+                    (
+                        typeof req.body[key] !== "string" ||
+                        !req.body[key].trim()
+                    )
                 ) {
                     return res.status(400).json({
                         message: `${key} cannot be empty.`,
@@ -296,24 +438,30 @@ const TemporaryCoordinatorController = {
                 }
             }
 
+            // Validate advertising company ID
             if (
                 Object.prototype.hasOwnProperty.call(
                     req.body,
                     "advertising_company_id"
                 ) &&
-                (!Number.isInteger(Number(advertising_company_id)) ||
-                    Number(advertising_company_id) <= 0)
+                (
+                    !Number.isInteger(Number(advertising_company_id)) ||
+                    Number(advertising_company_id) <= 0
+                )
             ) {
                 return res.status(400).json({
                     message: "Invalid advertising company ID.",
                 });
             }
 
+            // Validate dates
             for (const key of ["from_date", "to_date"]) {
                 if (
                     Object.prototype.hasOwnProperty.call(req.body, key) &&
-                    (!req.body[key] ||
-                        Number.isNaN(Date.parse(req.body[key])))
+                    (
+                        !req.body[key] ||
+                        Number.isNaN(Date.parse(req.body[key]))
+                    )
                 ) {
                     return res.status(400).json({
                         message: `Invalid ${key}.`,
@@ -326,7 +474,7 @@ const TemporaryCoordinatorController = {
             const request = pool.request();
             request.input("id", sql.Int, Number(id));
 
-            // Get existing record.
+            // Get existing record
             const existingResult = await request.query(`
                 SELECT *
                 FROM dbo.temporary_coordinator
@@ -361,6 +509,7 @@ const TemporaryCoordinatorController = {
                 });
             }
 
+            // Build update query
             const setClauses = [];
 
             updates.forEach(([key, field], index) => {
@@ -383,7 +532,7 @@ const TemporaryCoordinatorController = {
                 WHERE id = @id;
             `);
 
-            // Return updated record.
+            // Get updated record
             const updatedResult = await pool
                 .request()
                 .input("id", sql.Int, Number(id))
@@ -404,10 +553,15 @@ const TemporaryCoordinatorController = {
                     WHERE tc.id = @id;
                 `);
 
+            const coordinators = await getRetailNames(
+                updatedResult.recordset
+            );
+
             return res.status(200).json({
                 message: "Temporary coordinator updated successfully.",
-                coordinator: updatedResult.recordset[0],
+                coordinator: coordinators[0],
             });
+
         } catch (error) {
             console.error("updateTemporaryCoordinator:", error);
 
@@ -423,7 +577,10 @@ const TemporaryCoordinatorController = {
         }
     },
 
+    // ==========================================
     // DELETE
+    // ==========================================
+
     deleteTemporaryCoordinator: async (req, res) => {
         try {
             const { id } = req.params;
@@ -440,11 +597,13 @@ const TemporaryCoordinatorController = {
                 .request()
                 .input("id", sql.Int, Number(id))
                 .query(`
-                    DELETE FROM dbo.temporary_coordinator
-                    WHERE id = @id;
+                UPDATE dbo.temporary_coordinator
+                SET isdeleted = 1
+                WHERE id = @id
+                  AND isdeleted = 0;
 
-                    SELECT @@ROWCOUNT AS affectedRows;
-                `);
+                SELECT @@ROWCOUNT AS affectedRows;
+            `);
 
             if (result.recordset[0].affectedRows === 0) {
                 return res.status(404).json({
@@ -455,6 +614,7 @@ const TemporaryCoordinatorController = {
             return res.status(200).json({
                 message: "Temporary coordinator deleted successfully.",
             });
+
         } catch (error) {
             console.error("deleteTemporaryCoordinator:", error);
 

@@ -1,49 +1,154 @@
-import { sql, poolPromise } from "../config/db.js";
+import { sql, poolPromise, retailPoolPromise } from "../config/db.js";
 import {
     uploadCoordinatorPhotos,
     deleteCoordinatorImage,
 } from "./imageController.js";
 import { COORDINATOR_PHOTO_FIELDS } from "../utils/imagePaths.js";
+
+async function getRetailNames(coordinators) {
+    if (coordinators.length === 0) {
+        return [];
+    }
+
+    const retailPool = await retailPoolPromise;
+
+    if (!retailPool) {
+        throw new Error("Retail database unavailable");
+    }
+
+    const supplierIds = [
+        ...new Set(
+            coordinators
+                .map((item) => Number(item.company_name))
+                .filter((id) => Number.isSafeInteger(id) && id > 0)
+        ),
+    ];
+
+    const branchIds = [
+        ...new Set(
+            coordinators
+                .map((item) => Number(item.branch))
+                .filter((id) => Number.isSafeInteger(id) && id > 0)
+        ),
+    ];
+
+    const supplierMap = new Map();
+    const branchMap = new Map();
+
+    // Get supplier names
+    if (supplierIds.length > 0) {
+        const request = retailPool.request();
+
+        const parameters = supplierIds.map((id, index) => {
+            const parameter = `supplier${index}`;
+
+            request.input(parameter, sql.Int, id);
+
+            return `@${parameter}`;
+        });
+
+        const result = await request.query(`
+            SELECT
+                supplierno AS id,
+                LTRIM(RTRIM(a_name)) AS a_name
+            FROM dbo.sys_supplier
+            WHERE supplierno IN (${parameters.join(",")});
+        `);
+
+        for (const supplier of result.recordset) {
+            supplierMap.set(Number(supplier.id), supplier.a_name);
+        }
+    }
+
+    // Get branch names
+    if (branchIds.length > 0) {
+        const request = retailPool.request();
+
+        const parameters = branchIds.map((id, index) => {
+            const parameter = `branch${index}`;
+
+            request.input(parameter, sql.Int, id);
+
+            return `@${parameter}`;
+        });
+
+        const result = await request.query(`
+            SELECT
+                branch AS id,
+                LTRIM(RTRIM(a_name)) AS a_name
+            FROM dbo.sys_branch
+            WHERE branch IN (${parameters.join(",")});
+        `);
+
+        for (const branch of result.recordset) {
+            branchMap.set(Number(branch.id), branch.a_name);
+        }
+    }
+
+    return coordinators.map((coordinator) => {
+        const supplierId = Number(coordinator.company_name);
+        const branchId = Number(coordinator.branch);
+
+        return {
+            ...coordinator,
+
+            supplier_name:
+                supplierMap.get(supplierId) ??
+                coordinator.company_name ??
+                null,
+
+            branch_name:
+                branchMap.get(branchId) ??
+                coordinator.branch ??
+                null,
+        };
+    });
+}
+
 const CoordinatorController = {
+
     getAllCoordinators: async (req, res) => {
         try {
             const {
                 job,
                 filter,
                 code,
-                company,
+                supplierId,
+                branchId,
                 advertisingCompanyId,
-                branch,
             } = req.query;
-
-            if (code !== undefined) {
-                if (
-                    typeof code !== "string" ||
-                    !/^\d+$/.test(code.trim()) ||
-                    !Number.isSafeInteger(Number(code)) ||
-                    Number(code) <= 0 ||
-                    Number(code) > 2147483647
-                ) {
-                    return res.status(400).json({
-                        message: "Invalid coordinator code",
-                    });
-                }
-            }
 
             const pool = await poolPromise;
             const request = pool.request();
             const conditions = [];
 
-            if (code !== undefined) {
-                request.input("code", sql.Int, Number(code.trim()));
+            // Filter by coordinator code
+            if (code !== undefined && code !== "") {
+                const normalizedCode = String(code).trim();
+
+                if (
+                    !/^\d+$/.test(normalizedCode) ||
+                    !Number.isSafeInteger(Number(normalizedCode)) ||
+                    Number(normalizedCode) <= 0 ||
+                    Number(normalizedCode) > 2147483647
+                ) {
+                    return res.status(400).json({
+                        message: "Invalid coordinator code",
+                    });
+                }
+
+                request.input("code", sql.Int, Number(normalizedCode));
                 conditions.push("c.code = @code");
             }
 
-            if (job && job.trim()) {
+            // Filter by job
+            if (typeof job === "string" && job.trim()) {
                 request.input("job", sql.NVarChar(255), job.trim());
+
                 conditions.push("LTRIM(RTRIM(c.job)) = @job");
             }
 
+            // Filter by status
             if (filter === "expired") {
                 conditions.push(`
                 (
@@ -54,39 +159,84 @@ const CoordinatorController = {
             `);
             }
 
-            if (company && company.trim()) {
+            // Filter by supplier
+            if (supplierId !== undefined && supplierId !== "") {
+                const id = String(supplierId).trim();
+
+                if (
+                    !/^\d+$/.test(id) ||
+                    !Number.isSafeInteger(Number(id)) ||
+                    Number(id) <= 0 ||
+                    Number(id) > 2147483647
+                ) {
+                    return res.status(400).json({
+                        message: "Invalid supplier ID",
+                    });
+                }
+
                 request.input(
-                    "company",
+                    "supplierId",
                     sql.NVarChar(255),
-                    `%${company.trim()}%`
+                    String(Number(id))
                 );
-                conditions.push("c.company_name LIKE @company");
+
+                conditions.push("c.company_name = @supplierId");
             }
 
-            if (advertisingCompanyId) {
-                const id = Number(advertisingCompanyId);
+            // Filter by branch
+            if (branchId !== undefined && branchId !== "") {
+                const id = String(branchId).trim();
 
-                if (!Number.isInteger(id) || id <= 0) {
+                if (
+                    !/^\d+$/.test(id) ||
+                    !Number.isSafeInteger(Number(id)) ||
+                    Number(id) <= 0 ||
+                    Number(id) > 2147483647
+                ) {
+                    return res.status(400).json({
+                        message: "Invalid branch ID",
+                    });
+                }
+
+                request.input(
+                    "branchId",
+                    sql.NVarChar(255),
+                    String(Number(id))
+                );
+
+                conditions.push("c.branch = @branchId");
+            }
+
+            // Filter by advertising company
+            if (
+                advertisingCompanyId !== undefined &&
+                advertisingCompanyId !== ""
+            ) {
+                const id = String(advertisingCompanyId).trim();
+
+                if (
+                    !/^\d+$/.test(id) ||
+                    !Number.isSafeInteger(Number(id)) ||
+                    Number(id) <= 0 ||
+                    Number(id) > 2147483647
+                ) {
                     return res.status(400).json({
                         message: "Invalid advertising company ID",
                     });
                 }
 
-                request.input("advertisingCompanyId", sql.Int, id);
+                request.input(
+                    "advertisingCompanyId",
+                    sql.Int,
+                    Number(id)
+                );
+
                 conditions.push(
                     "c.advertising_company_id = @advertisingCompanyId"
                 );
             }
 
-            if (branch && branch.trim()) {
-                request.input(
-                    "branch",
-                    sql.NVarChar(255),
-                    `%${branch.trim()}%`
-                );
-                conditions.push("c.branch LIKE @branch");
-            }
-
+            // Main query
             let query = `
             SELECT
                 c.*,
@@ -96,38 +246,54 @@ const CoordinatorController = {
                 e.exception_start_date,
                 e.exception_end_date
             FROM dbo.coordinator AS c
+
             LEFT JOIN dbo.advertising_companies AS ac
                 ON ac.id = c.advertising_company_id
+                AND ac.isdeleted = 0
+
             LEFT JOIN dbo.[exception] AS e
                 ON e.coordinator_id = c.id
+                AND e.isdeleted = 0
         `;
 
             if (conditions.length > 0) {
-                query += ` WHERE ${conditions.join(" AND ")}`;
+                query += `
+                WHERE ${conditions.join(" AND ")}
+            `;
             }
 
-            query += " ORDER BY c.id;";
+            query += `
+            ORDER BY c.id;
+        `;
 
             const result = await request.query(query);
 
+            // Get supplier and branch names from the retail database
+            const coordinators = await getRetailNames(result.recordset);
+
             return res.status(200).json({
                 message: "Get coordinators successful",
-                coordinators: result.recordset,
+                coordinators,
             });
+
         } catch (error) {
             console.error("Get all coordinators error:", error);
 
             return res.status(500).json({
                 message: "Get coordinators failed",
+                error: error.message,
             });
         }
     },
 
     getCoordinatorById: async (req, res) => {
         try {
-            const id = req.body.id;
+            const id = Number(req.body.id);
 
-            if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+            if (
+                !Number.isInteger(id) ||
+                id <= 0
+            ) {
                 return res.status(400).json({
                     message: "Invalid coordinator ID",
                 });
@@ -137,14 +303,22 @@ const CoordinatorController = {
 
             const result = await pool
                 .request()
-                .input("id", sql.Int, Number(id))
+                .input("id", sql.Int, id)
                 .query(`
                 SELECT
                     c.*,
-                    e.*
-                FROM coordinator AS c
-                LEFT JOIN [exception] AS e
+                    e.exception_id,
+                    e.coordinator_id,
+                    e.exception_name,
+                    e.exception_start_date,
+                    e.exception_end_date,
+                    e.isdeleted
+                FROM dbo.coordinator AS c
+
+                LEFT JOIN dbo.[exception] AS e
                     ON e.coordinator_id = c.id
+                    AND e.isdeleted = 0
+
                 WHERE c.id = @id;
             `);
 
@@ -164,6 +338,7 @@ const CoordinatorController = {
 
             return res.status(500).json({
                 message: "Get coordinator by ID failed",
+                error: error.message,
             });
         }
     },
@@ -175,6 +350,7 @@ const CoordinatorController = {
                 name,
                 job,
                 company_name,
+                branch,
                 email_discount,
                 health_certificate_issuance_date,
                 health_certificate_expiry_date,
@@ -197,7 +373,8 @@ const CoordinatorController = {
                 supervisor_national_id_picture,
                 states,
             } = req.body;
-
+            const supplierId = String(company_name ?? "").trim();
+            const branchId = String(branch ?? "").trim();
             if (
                 code === undefined ||
                 code === null ||
@@ -208,8 +385,8 @@ const CoordinatorController = {
                 Number(code) > 2147483647 ||
                 typeof name !== "string" ||
                 name.trim() === "" ||
-                typeof company_name !== "string" ||
-                company_name.trim() === "" ||
+                !/^\d+$/.test(supplierId) ||
+                !/^\d+$/.test(branchId) ||
                 created_by === undefined ||
                 created_by === null ||
                 String(created_by).trim() === "" ||
@@ -220,7 +397,7 @@ const CoordinatorController = {
             ) {
                 return res.status(400).json({
                     message:
-                        "Valid code, name, company_name, and created_by are required",
+                        "Valid code, name, supplier ID, branch ID, and created_by are required",
                 });
             }
 
@@ -295,7 +472,12 @@ const CoordinatorController = {
                 .input(
                     "companyName",
                     sql.NVarChar(255),
-                    company_name.trim()
+                    supplierId
+                )
+                .input(
+                    "branch",
+                    sql.NVarChar(255),
+                    branchId
                 )
                 .input(
                     "emailDiscount",
@@ -383,33 +565,34 @@ const CoordinatorController = {
                 )
                 .input("state", sql.NVarChar(100), states || null)
                 .query(`
-                INSERT INTO dbo.coordinator (
-                    code,
-                    name,
-                    job,
-                    company_name,
-                    email_discount,
-                    health_certificate_issuance_date,
-                    health_certificate_expiry_date,
-                    national_id_number,
-                    mobile,
-                    governorate,
-                    notes,
-                    id_issuance_date,
-                    id_expiry_date,
-                    created_by,
-                    address,
-                    supervisor_name,
-                    number_of_print_copies,
-                    security_situation,
-                    profile_picture,
-                    national_id_picture,
-                    health_certificate_picture,
-                    company_authorization_picture,
-                    social_insurance_picture,
-                    supervisor_national_id_picture,
-                    states
-                )
+INSERT INTO dbo.coordinator (
+    code,
+    name,
+    job,
+    company_name,
+    branch,
+    email_discount,
+    health_certificate_issuance_date,
+    health_certificate_expiry_date,
+    national_id_number,
+    mobile,
+    governorate,
+    notes,
+    id_issuance_date,
+    id_expiry_date,
+    created_by,
+    address,
+    supervisor_name,
+    number_of_print_copies,
+    security_situation,
+    profile_picture,
+    national_id_picture,
+    health_certificate_picture,
+    company_authorization_picture,
+    social_insurance_picture,
+    supervisor_national_id_picture,
+    states
+)
                 OUTPUT
                     INSERTED.id,
                     INSERTED.code,
@@ -417,33 +600,34 @@ const CoordinatorController = {
                     INSERTED.company_name,
                     INSERTED.created_by,
                     INSERTED.states
-                VALUES (
-                    @code,
-                    @name,
-                    @job,
-                    @companyName,
-                    @emailDiscount,
-                    @healthCertificateIssuanceDate,
-                    @healthCertificateExpiryDate,
-                    @nationalIdNumber,
-                    @mobile,
-                    @governorate,
-                    @notes,
-                    @idIssuanceDate,
-                    @idExpiryDate,
-                    @createdBy,
-                    @address,
-                    @supervisorName,
-                    @numberOfPrintCopies,
-                    @securitySituation,
-                    @profilePicture,
-                    @nationalIdPicture,
-                    @healthCertificatePicture,
-                    @companyAuthorizationPicture,
-                    @socialInsurancePicture,
-                    @supervisorNationalIdPicture,
-                    @state
-                );
+VALUES (
+    @code,
+    @name,
+    @job,
+    @companyName,
+    @branch,
+    @emailDiscount,
+    @healthCertificateIssuanceDate,
+    @healthCertificateExpiryDate,
+    @nationalIdNumber,
+    @mobile,
+    @governorate,
+    @notes,
+    @idIssuanceDate,
+    @idExpiryDate,
+    @createdBy,
+    @address,
+    @supervisorName,
+    @numberOfPrintCopies,
+    @securitySituation,
+    @profilePicture,
+    @nationalIdPicture,
+    @healthCertificatePicture,
+    @companyAuthorizationPicture,
+    @socialInsurancePicture,
+    @supervisorNationalIdPicture,
+    @state
+);
             `);
 
             return res.status(201).json({
@@ -473,6 +657,7 @@ const CoordinatorController = {
         try {
             const { id, ...fields } = req.body;
 
+            // Validate coordinator ID
             if (
                 id === undefined ||
                 id === null ||
@@ -488,10 +673,20 @@ const CoordinatorController = {
 
             const coordinatorId = Number(id);
 
+            // Editable database columns
             const columnMap = {
-                code: { column: "code", type: sql.Int },
-                name: { column: "name", type: sql.NVarChar(255) },
-                job: { column: "job", type: sql.NVarChar(255) },
+                code: {
+                    column: "code",
+                    type: sql.Int,
+                },
+                name: {
+                    column: "name",
+                    type: sql.NVarChar(255),
+                },
+                job: {
+                    column: "job",
+                    type: sql.NVarChar(255),
+                },
                 companyName: {
                     column: "company_name",
                     type: sql.NVarChar(255),
@@ -520,12 +715,18 @@ const CoordinatorController = {
                     column: "national_id_number",
                     type: sql.NVarChar(50),
                 },
-                mobile: { column: "mobile", type: sql.NVarChar(30) },
+                mobile: {
+                    column: "mobile",
+                    type: sql.NVarChar(30),
+                },
                 governorate: {
                     column: "governorate",
                     type: sql.NVarChar(100),
                 },
-                notes: { column: "notes", type: sql.NVarChar(sql.MAX) },
+                notes: {
+                    column: "notes",
+                    type: sql.NVarChar(sql.MAX),
+                },
                 idIssuanceDate: {
                     column: "id_issuance_date",
                     type: sql.Date,
@@ -534,7 +735,10 @@ const CoordinatorController = {
                     column: "id_expiry_date",
                     type: sql.Date,
                 },
-                address: { column: "address", type: sql.NVarChar(500) },
+                address: {
+                    column: "address",
+                    type: sql.NVarChar(500),
+                },
                 supervisorName: {
                     column: "supervisor_name",
                     type: sql.NVarChar(255),
@@ -553,6 +757,7 @@ const CoordinatorController = {
                 },
             };
 
+            // Reject unknown fields
             const invalidFields = Object.keys(fields).filter(
                 (key) => !Object.hasOwn(columnMap, key)
             );
@@ -563,6 +768,8 @@ const CoordinatorController = {
                     fields: invalidFields,
                 });
             }
+
+            // Normalize empty strings to null
             const normalizedFields = {};
 
             for (const [key, value] of Object.entries(fields)) {
@@ -579,47 +786,100 @@ const CoordinatorController = {
                 "idExpiryDate",
             ];
 
+            // Validate fields
             for (const [key, value] of Object.entries(normalizedFields)) {
                 if (
                     key === "name" &&
-                    (value === null || typeof value !== "string")
+                    (value === null || typeof value !== "string" || !value.trim())
                 ) {
                     return res.status(400).json({
                         message: "Name cannot be empty",
                     });
                 }
 
-                if (
-                    key === "code" &&
-                    (
+                // Validate coordinator code
+                if (key === "code") {
+                    if (
                         value === null ||
                         !/^\d+$/.test(String(value).trim()) ||
                         !Number.isSafeInteger(Number(value)) ||
                         Number(value) <= 0 ||
                         Number(value) > 2147483647
-                    )
-                ) {
-                    return res.status(400).json({
-                        message: "Code must be a valid positive integer",
-                    });
+                    ) {
+                        return res.status(400).json({
+                            message: "Code must be a valid positive integer",
+                        });
+                    }
                 }
 
-                if (
-                    key === "numberOfPrintcopies" &&
-                    value !== null &&
-                    (
-                        !/^\d+$/.test(String(value).trim()) ||
-                        !Number.isSafeInteger(Number(value)) ||
-                        Number(value) < 0 ||
-                        Number(value) > 2147483647
-                    )
-                ) {
-                    return res.status(400).json({
-                        message:
-                            "numberOfPrintcopies must be a non-negative integer or null",
-                    });
+                // Validate supplier ID and branch ID
+                if (key === "companyName" || key === "branch") {
+                    if (
+                        value !== null &&
+                        (
+                            !/^\d+$/.test(String(value).trim()) ||
+                            !Number.isSafeInteger(Number(value)) ||
+                            Number(value) <= 0 ||
+                            Number(value) > 2147483647
+                        )
+                    ) {
+                        return res.status(400).json({
+                            message:
+                                key === "companyName"
+                                    ? "A valid supplier ID is required"
+                                    : "A valid branch ID is required",
+                        });
+                    }
+
+                    if (value !== null) {
+                        normalizedFields[key] = String(Number(value));
+                    }
                 }
 
+                // Validate advertising company ID
+                if (key === "advertisingCompanyId") {
+                    if (
+                        value !== null &&
+                        (
+                            !/^\d+$/.test(String(value).trim()) ||
+                            !Number.isSafeInteger(Number(value)) ||
+                            Number(value) <= 0 ||
+                            Number(value) > 2147483647
+                        )
+                    ) {
+                        return res.status(400).json({
+                            message: "A valid advertising company ID is required",
+                        });
+                    }
+
+                    if (value !== null) {
+                        normalizedFields[key] = Number(value);
+                    }
+                }
+
+                // Validate number of print copies
+                if (key === "numberOfPrintcopies") {
+                    if (
+                        value !== null &&
+                        (
+                            !/^\d+$/.test(String(value).trim()) ||
+                            !Number.isSafeInteger(Number(value)) ||
+                            Number(value) < 0 ||
+                            Number(value) > 2147483647
+                        )
+                    ) {
+                        return res.status(400).json({
+                            message:
+                                "numberOfPrintcopies must be a non-negative integer or null",
+                        });
+                    }
+
+                    if (value !== null) {
+                        normalizedFields[key] = Number(value);
+                    }
+                }
+
+                // Validate dates
                 if (dateFields.includes(key) && value !== null) {
                     const validFormat =
                         typeof value === "string" &&
@@ -643,6 +903,7 @@ const CoordinatorController = {
 
             const pool = await poolPromise;
 
+            // Get existing coordinator
             const existingResult = await pool
                 .request()
                 .input("id", sql.Int, coordinatorId)
@@ -660,15 +921,18 @@ const CoordinatorController = {
 
             const existing = existingResult.recordset[0];
 
+            // Save old photo paths
             const oldPhotoPaths = {};
 
             for (const column of Object.values(COORDINATOR_PHOTO_FIELDS)) {
                 oldPhotoPaths[column] = existing[column];
             }
 
+            // Find only changed fields
             const changedEntries = Object.entries(normalizedFields).filter(
                 ([key, value]) => {
                     const column = columnMap[key].column;
+
                     let oldValue = existing[column];
                     let newValue = value;
 
@@ -676,18 +940,22 @@ const CoordinatorController = {
                         oldValue = oldValue
                             ? new Date(oldValue).toISOString().slice(0, 10)
                             : null;
+
                         newValue = newValue ?? null;
                     } else if (
                         key === "code" ||
-                        key === "numberOfPrintcopies"
+                        key === "numberOfPrintcopies" ||
+                        key === "advertisingCompanyId"
                     ) {
                         oldValue =
                             oldValue == null ? null : Number(oldValue);
+
                         newValue =
                             newValue == null ? null : Number(newValue);
                     } else {
                         oldValue =
                             oldValue == null ? null : String(oldValue);
+
                         newValue =
                             newValue == null ? null : String(newValue);
 
@@ -700,6 +968,7 @@ const CoordinatorController = {
                 }
             );
 
+            // Check duplicate coordinator code
             const codeEntry = changedEntries.find(
                 ([key]) => key === "code"
             );
@@ -712,7 +981,8 @@ const CoordinatorController = {
                     .query(`
                     SELECT id
                     FROM dbo.coordinator
-                    WHERE code = @code AND id <> @id;
+                    WHERE code = @code
+                      AND id <> @id;
                 `);
 
                 if (duplicate.recordset.length > 0) {
@@ -722,11 +992,13 @@ const CoordinatorController = {
                 }
             }
 
+            // Upload photos
             uploadedPhotoPaths = await uploadCoordinatorPhotos(
                 coordinatorId,
                 req.files ?? {}
             );
 
+            // Validate uploaded photo columns and paths
             const allowedPhotoColumns = new Set(
                 Object.values(COORDINATOR_PHOTO_FIELDS)
             );
@@ -739,10 +1011,13 @@ const CoordinatorController = {
                 }
 
                 if (typeof path !== "string" || path.trim() === "") {
-                    throw new Error(`Invalid uploaded path for ${column}`);
+                    throw new Error(
+                        `Invalid uploaded path for ${column}`
+                    );
                 }
             }
 
+            // Prepare SQL update
             const request = pool.request().input(
                 "id",
                 sql.Int,
@@ -762,23 +1037,35 @@ const CoordinatorController = {
                 }
 
                 if (
-                    (key === "code" || key === "numberOfPrintcopies") &&
+                    (
+                        key === "code" ||
+                        key === "numberOfPrintcopies" ||
+                        key === "advertisingCompanyId"
+                    ) &&
                     value !== null
                 ) {
                     parsedValue = Number(value);
                 }
 
                 request.input(parameter, type, parsedValue);
+
                 setClauses.push(`[${column}] = @${parameter}`);
             }
 
+            // Add photo updates
             for (const [column, path] of Object.entries(uploadedPhotoPaths)) {
                 const parameter = `photo_${column}`;
 
-                request.input(parameter, sql.NVarChar(sql.MAX), path);
+                request.input(
+                    parameter,
+                    sql.NVarChar(sql.MAX),
+                    path
+                );
+
                 setClauses.push(`[${column}] = @${parameter}`);
             }
 
+            // Nothing changed
             if (setClauses.length === 0) {
                 return res.status(200).json({
                     message: "No changes to update",
@@ -786,6 +1073,7 @@ const CoordinatorController = {
                 });
             }
 
+            // Execute update
             const result = await request.query(`
             UPDATE dbo.coordinator
             SET ${setClauses.join(", ")}
@@ -794,8 +1082,10 @@ const CoordinatorController = {
         `);
 
             const updatedCoordinator = result.recordset[0];
+
             databaseUpdateSucceeded = true;
 
+            // Delete old photos only after successful database update
             const deletionFailures = [];
 
             for (const [column, newPath] of Object.entries(uploadedPhotoPaths)) {
@@ -807,7 +1097,11 @@ const CoordinatorController = {
 
                 try {
                     await deleteCoordinatorImage(oldPath);
-                    console.log(`Deleted old photo for ${column}:`, oldPath);
+
+                    console.log(
+                        `Deleted old photo for ${column}:`,
+                        oldPath
+                    );
                 } catch (error) {
                     console.error(
                         `Failed to delete old photo for ${column}:`,
@@ -839,6 +1133,7 @@ const CoordinatorController = {
         } catch (error) {
             console.error("Update coordinator error:", error);
 
+            // Clean up newly uploaded photos if DB update failed
             if (!databaseUpdateSucceeded) {
                 for (const newPath of Object.values(uploadedPhotoPaths)) {
                     try {

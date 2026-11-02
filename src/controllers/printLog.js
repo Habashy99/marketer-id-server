@@ -7,16 +7,17 @@ const PrintLogController = {
             const pool = await poolPromise;
 
             const result = await pool.request().query(`
-                SELECT
-                    id,
-                    code,
-                    name,
-                    type,
-                    created_by,
-                    [date]
-                FROM dbo.print_log
-                ORDER BY [date] DESC
-            `);
+            SELECT
+                id,
+                code,
+                name,
+                type,
+                created_by,
+                [date]
+            FROM dbo.print_log
+            WHERE isdeleted = 0
+            ORDER BY [date] DESC;
+        `);
 
             return res.status(200).json({
                 message: "Logs retrieved successfully",
@@ -248,13 +249,16 @@ const PrintLogController = {
                 .request()
                 .input("id", sql.Int, Number(id))
                 .query(`
-                DELETE FROM dbo.print_log
+                UPDATE dbo.print_log
+                SET isdeleted = 1
                 OUTPUT
-                    DELETED.id,
-                    DELETED.code,
-                    DELETED.name,
-                    DELETED.type
+                    INSERTED.id,
+                    INSERTED.code,
+                    INSERTED.name,
+                    INSERTED.type,
+                    INSERTED.isdeleted
                 WHERE id = @id
+                  AND isdeleted = 0;
             `);
 
             if (result.recordset.length === 0) {
@@ -267,6 +271,7 @@ const PrintLogController = {
                 message: "تم حذف السجل بنجاح",
                 deletedLog: result.recordset[0],
             });
+
         } catch (error) {
             console.error("Delete log error:", error);
 
@@ -282,7 +287,7 @@ const PrintLogController = {
             const result = await pool.request().query(`
             SELECT
                 COALESCE(SUM(number_of_print_copies), 0) AS totalPrintedCards
-            FROM dbo.coordinator
+            FROM dbo.coordinator;
         `);
 
             return res.status(200).json({
@@ -294,6 +299,7 @@ const PrintLogController = {
 
             return res.status(500).json({
                 message: "Failed to retrieve total printed cards",
+                error: error.message,
             });
         }
     },

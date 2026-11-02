@@ -17,16 +17,17 @@ const CardLogsController = {
             const request = pool.request();
 
             let query = `
-                SELECT
-                    cl.id,
-                    cl.quantity,
-                    cl.[date],
-                    cl.created_by AS created_by_id,
-                    u.name AS created_by
-                FROM dbo.card_logs AS cl
-                INNER JOIN dbo.users AS u
-                    ON u.id = cl.created_by
-            `;
+            SELECT
+                cl.id,
+                cl.quantity,
+                cl.[date],
+                cl.created_by AS created_by_id,
+                u.name AS created_by
+            FROM dbo.card_logs AS cl
+            INNER JOIN dbo.users AS u
+                ON u.id = cl.created_by
+            WHERE cl.isdeleted = 0
+        `;
 
             if (fromDate && toDate) {
                 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
@@ -52,14 +53,14 @@ const CardLogsController = {
                 request.input("toDate", sql.Date, toDate);
 
                 query += `
-                    WHERE cl.[date] >= @fromDate
-                      AND cl.[date] <= @toDate
-                `;
+                AND cl.[date] >= @fromDate
+                AND cl.[date] < DATEADD(DAY, 1, @toDate)
+            `;
             }
 
             query += `
-                ORDER BY cl.[date] DESC, cl.id DESC
-            `;
+            ORDER BY cl.[date] DESC, cl.id DESC
+        `;
 
             const result = await request.query(query);
 
@@ -154,10 +155,12 @@ const CardLogsController = {
                 .request()
                 .input("id", sql.Int, id)
                 .query(`
-                    DELETE FROM dbo.card_logs
-                    OUTPUT DELETED.id
-                    WHERE id = @id
-                `);
+                UPDATE dbo.card_logs
+                SET isdeleted = 1
+                OUTPUT INSERTED.id
+                WHERE id = @id
+                  AND isdeleted = 0;
+            `);
 
             if (result.recordset.length === 0) {
                 return res.status(404).json({
@@ -169,6 +172,7 @@ const CardLogsController = {
                 message: "تم حذف السجل بنجاح",
                 id: result.recordset[0].id,
             });
+
         } catch (error) {
             console.error("deleteLog error:", error);
 
@@ -183,9 +187,10 @@ const CardLogsController = {
             const pool = await poolPromise;
 
             const result = await pool.request().query(`
-                SELECT COALESCE(SUM(quantity), 0) AS totalQuantity
-                FROM dbo.card_logs
-            `);
+            SELECT COALESCE(SUM(quantity), 0) AS totalQuantity
+            FROM dbo.card_logs
+            WHERE isdeleted = 0;
+        `);
 
             return res.status(200).json({
                 totalQuantity: result.recordset[0].totalQuantity,

@@ -91,11 +91,7 @@ const ExceptionController = {
 
     deleteException: async (req, res) => {
         try {
-            const { coordinatorId, exceptionId } = req.body.exception_id;
-
-            console.log("Delete exception body:", req.body);
-            console.log("coordinatorId:", coordinatorId, typeof coordinatorId);
-            console.log("exceptionId:", exceptionId, typeof exceptionId);
+            const { coordinatorId, exceptionId } = req.body;
 
             const parsedCoordinatorId = Number(coordinatorId);
             const parsedExceptionId = Number(exceptionId);
@@ -118,20 +114,23 @@ const ExceptionController = {
                 .input("coordinatorId", sql.Int, parsedCoordinatorId)
                 .input("exceptionId", sql.Int, parsedExceptionId)
                 .query(`
-                DELETE FROM dbo.exception
+                UPDATE dbo.exception
+                SET isdeleted = 1
                 OUTPUT
-                    DELETED.exception_id,
-                    DELETED.coordinator_id,
-                    DELETED.exception_name,
-                    DELETED.exception_start_date,
-                    DELETED.exception_end_date
+                    INSERTED.exception_id,
+                    INSERTED.coordinator_id,
+                    INSERTED.exception_name,
+                    INSERTED.exception_start_date,
+                    INSERTED.exception_end_date,
+                    INSERTED.isdeleted
                 WHERE exception_id = @exceptionId
-                  AND coordinator_id = @coordinatorId;
+                  AND coordinator_id = @coordinatorId
+                  AND isdeleted = 0;
             `);
 
             if (result.recordset.length === 0) {
                 return res.status(404).json({
-                    message: "الاستثناء غير موجود لهذا المنسق.",
+                    message: "الاستثناء غير موجود لهذا المنسق أو تم حذفه بالفعل.",
                 });
             }
 
@@ -139,11 +138,13 @@ const ExceptionController = {
                 message: "تم حذف الاستثناء بنجاح.",
                 exception: result.recordset[0],
             });
+
         } catch (error) {
             console.error("Delete exception error:", error);
 
             return res.status(500).json({
                 message: "حدث خطأ أثناء حذف الاستثناء.",
+                error: error.message,
             });
         }
     },

@@ -8,12 +8,13 @@ const AdvertisingCompanyController = {
             const pool = await poolPromise;
 
             const result = await pool.request().query(`
-                SELECT
-                    id,
-                    name
-                FROM dbo.advertising_companies
-                ORDER BY name ASC;
-            `);
+            SELECT
+                id,
+                name
+            FROM dbo.advertising_companies
+            WHERE isdeleted = 0
+            ORDER BY name ASC;
+        `);
 
             return res.status(200).json({
                 companies: result.recordset,
@@ -88,12 +89,15 @@ const AdvertisingCompanyController = {
                 .request()
                 .input("id", sql.Int, id)
                 .query(`
-                    DELETE FROM dbo.advertising_companies
-                    OUTPUT
-                        DELETED.id,
-                        DELETED.name
-                    WHERE id = @id;
-                `);
+                UPDATE dbo.advertising_companies
+                SET isdeleted = 1
+                OUTPUT
+                    INSERTED.id,
+                    INSERTED.name,
+                    INSERTED.isdeleted
+                WHERE id = @id
+                  AND isdeleted = 0;
+            `);
 
             if (result.recordset.length === 0) {
                 return res.status(404).json({
@@ -105,18 +109,44 @@ const AdvertisingCompanyController = {
                 message: "Advertising company deleted successfully.",
                 company: result.recordset[0],
             });
+
         } catch (error) {
             console.error("Delete advertising company error:", error);
 
-            // Company is referenced by temporary_coordinator
-            if (error.number === 547) {
-                return res.status(409).json({
-                    message: "لا يمكن حذف الشركة لأنها مرتبطة بمنسق مؤقت.",
-                });
-            }
-
             return res.status(500).json({
                 message: "Failed to delete advertising company.",
+            });
+        }
+    },
+    // SEARCH ADVERTISING COMPANIES
+    searchAdvertisingCompanies: async (req, res) => {
+        try {
+            const search = String(req.query.search ?? "").trim();
+
+            if (search.length < 2) {
+                return res.status(200).json([]);
+            }
+
+            const pool = await poolPromise;
+
+            const result = await pool
+                .request()
+                .input("search", sql.NVarChar(150), `%${search}%`)
+                .query(`
+                SELECT TOP 50
+                    id,
+                    name AS a_name
+                FROM dbo.advertising_companies
+                WHERE name LIKE @search
+                ORDER BY name ASC;
+            `);
+
+            return res.status(200).json(result.recordset);
+        } catch (error) {
+            console.error("Search advertising companies error:", error);
+
+            return res.status(500).json({
+                message: "Failed to search advertising companies.",
             });
         }
     },
