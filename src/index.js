@@ -19,6 +19,8 @@ import cardLogsRouter from "./routes/cardLogs.js";
 import cookieParser from "cookie-parser";
 import temporaryCoordinator from "./routes/temporaryCoordinator.js";
 import advertisingCompany from "./routes/advertisingCompany.js";
+import retailRoutes from "./routes/retail.js";
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,6 +68,7 @@ app.use(cookieParser());
 app.use("/users", usersRoutes);
 app.use("/printLog", printLogRouter);
 app.use("/coordinators", coordinatorsRoutes);
+app.use("/retail", retailRoutes);
 app.use("/auths", authsRoutes);
 app.use("/exceptions", exceptionsRouter);
 app.use("/authsUser", authsUserRoutes);
