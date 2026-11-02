@@ -1,4 +1,3 @@
-
 import dotenv from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,20 +10,47 @@ dotenv.config({
     path: path.resolve(__dirname, "../../.env"),
 });
 
-const config = {
-    server: process.env.DB_SERVER,
-    port: Number(process.env.DB_PORT || 53306),
-    database: process.env.DB_NAME,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    options: {
-        encrypt: false,
-        trustServerCertificate: true,
-    },
-    connectionTimeout: 30000,
-    requestTimeout: 30000,
+const createDatabaseConfig = (prefix) => {
+    const isDefault = prefix === "DB";
+
+    const config = {
+        server: process.env[`${prefix}_SERVER`],
+        port: Number(process.env[`${prefix}_PORT`]),
+        database: process.env[`${prefix}_NAME`],
+        user: process.env[`${prefix}_USER`],
+        password: process.env[`${prefix}_PASSWORD`],
+
+        options: {
+            encrypt: false,
+            trustServerCertificate: true,
+        },
+
+        connectionTimeout: 30000,
+        requestTimeout: 30000,
+        pool: {
+            max: 10,
+            min: 0,
+            idleTimeoutMillis: 30000,
+        },
+    };
+
+    const instanceName = process.env[`${prefix}_INSTANCE`];
+
+    if (instanceName) {
+        config.options.instanceName = instanceName;
+    }
+
+    return config;
 };
 
-const poolPromise = sql.connect(config);
+// Database 1: my database
+const db1Config = createDatabaseConfig("DB");
 
-export { sql, poolPromise };
+// Database 2: Retail database
+const db2Config = createDatabaseConfig("DB2");
+
+export const poolPromise = new sql.ConnectionPool(db1Config).connect();
+
+export const retailPoolPromise = new sql.ConnectionPool(db2Config).connect();
+
+export { sql };
