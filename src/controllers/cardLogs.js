@@ -1,6 +1,6 @@
 
 import sql from "mssql";
-import { poolPromise } from "../config/db.js";
+import { retailPoolPromise } from "../config/db.js";
 
 const CardLogsController = {
     getAllLogs: async (req, res) => {
@@ -13,7 +13,7 @@ const CardLogsController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
             const request = pool.request();
 
             let query = `
@@ -24,7 +24,7 @@ const CardLogsController = {
                 cl.created_by AS created_by_id,
                 u.name AS created_by
             FROM dbo.card_logs AS cl
-            INNER JOIN dbo.users AS u
+            INNER JOIN dbo.DelegateuserPermissions AS u
                 ON u.id = cl.created_by
             WHERE cl.isdeleted = 0
         `;
@@ -94,7 +94,7 @@ const CardLogsController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -117,7 +117,7 @@ const CardLogsController = {
                 .input("userId", sql.Int, userId)
                 .query(`
                 SELECT name
-                FROM dbo.users
+                FROM dbo.DelegateuserPermissions
                 WHERE id = @userId;
             `);
 
@@ -149,7 +149,7 @@ const CardLogsController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -184,7 +184,7 @@ const CardLogsController = {
 
     getTotalQuantity: async (req, res) => {
         try {
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool.request().query(`
             SELECT COALESCE(SUM(quantity), 0) AS totalQuantity

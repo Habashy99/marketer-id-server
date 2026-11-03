@@ -43,14 +43,9 @@ const createDatabaseConfig = (prefix) => {
     return config;
 };
 
-// Database 1: my database
-const db1Config = createDatabaseConfig("DB");
 
-// Database 2: Retail database
-const db2Config = createDatabaseConfig("DB2");
+const dbConfig = createDatabaseConfig("DB");
 
-export const poolPromise = new sql.ConnectionPool(db1Config).connect();
-
-export const retailPoolPromise = new sql.ConnectionPool(db2Config).connect();
+export const retailPoolPromise = new sql.ConnectionPool(dbConfig).connect();
 
 export { sql };

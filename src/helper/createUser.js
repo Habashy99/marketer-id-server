@@ -1,9 +1,9 @@
 
-import { sql, poolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 import bcrypt from "bcryptjs";
 
 const createUser = async ({ code, name, password, createdBy, type }) => {
-    const pool = await poolPromise;
+    const pool = await retailPoolPromise;
 
     const passwordHash = await bcrypt.hash(password, 12);
     const createdAt = new Date();
@@ -17,7 +17,7 @@ const createUser = async ({ code, name, password, createdBy, type }) => {
         .input("createdAt", sql.DateTime, createdAt)
         .input("type", sql.NVarChar(50), type)
         .query(`
-            INSERT INTO dbo.users (
+            INSERT INTO dbo.DelegateuserPermissions (
                 code,
                 name,
                 password,

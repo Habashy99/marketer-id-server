@@ -1,6 +1,6 @@
 
 import sql from "mssql";
-import { poolPromise, retailPoolPromise } from "../config/db.js";
+import {retailPoolPromise } from "../config/db.js";
 
 // ==========================================
 // GET SUPPLIER AND BRANCH NAMES
@@ -159,7 +159,7 @@ const TemporaryCoordinatorController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             // Insert coordinator
             const result = await pool
@@ -255,7 +255,7 @@ const TemporaryCoordinatorController = {
 
     getAllTemporaryCoordinators: async (req, res) => {
         try {
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool.request().query(`
             SELECT
@@ -306,7 +306,7 @@ const TemporaryCoordinatorController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -469,7 +469,7 @@ const TemporaryCoordinatorController = {
                 }
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const request = pool.request();
             request.input("id", sql.Int, Number(id));
@@ -591,7 +591,7 @@ const TemporaryCoordinatorController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()

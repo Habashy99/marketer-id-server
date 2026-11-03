@@ -1,4 +1,4 @@
-import { sql, poolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 const AuthController = {
     getAuthByNumber: async (req, res) => {
         try {
@@ -10,7 +10,7 @@ const AuthController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -40,7 +40,7 @@ const AuthController = {
 
     getAllAuths: async (req, res) => {
         try {
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool.request().query(`
             SELECT
@@ -88,7 +88,7 @@ const AuthController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
             const result = await pool
                 .request()
                 .input("authNumber", sql.Int, Number(authNumber))
@@ -135,7 +135,7 @@ const AuthController = {
                     message: "Auth number and name are required",
                 });
             }
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
             const existingAuth = await pool
                 .request()
                 .input("authNumber", sql.Int, Number(authNumber))

@@ -1,5 +1,5 @@
 
-import { sql, poolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 
 const ExceptionController = {
     createException: async (req, res) => {
@@ -30,7 +30,7 @@ const ExceptionController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const coordinator = await pool
                 .request()
@@ -107,7 +107,7 @@ const ExceptionController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()

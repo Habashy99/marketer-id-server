@@ -1,13 +1,13 @@
-import { sql, poolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 
 const getUserIdByCode = async (code) => {
-    const pool = await poolPromise;
+    const pool = await retailPoolPromise;
 
     const result = await pool.request()
         .input("code", sql.Int, Number(code))
         .query(`
             SELECT id
-            FROM dbo.users
+            FROM dbo.DelegateuserPermissions
             WHERE code = @code;
         `);
 

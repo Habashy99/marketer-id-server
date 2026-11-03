@@ -1,10 +1,10 @@
 
-import { poolPromise } from "../config/db.js";
+import { retailPoolPromise } from "../config/db.js";
 
 const DashboardController = {
     getStats: async (req, res) => {
         try {
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool.request().query(`
                 WITH normalized AS (
@@ -153,7 +153,7 @@ const DashboardController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool.request().query(`
                 WITH normalized AS (

@@ -5,7 +5,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
-import { poolPromise } from "./config/db.js";
+import { retailPoolPromise } from "./config/db.js";
 import { testNextcloudConnection } from "./controllers/imageController.js";
 import usersRoutes from "./routes/user.js";
 import coordinatorsRoutes from "./routes/coordinator.js";
@@ -133,7 +133,7 @@ testNextcloudConnection()
 
 async function startServer() {
     try {
-        await poolPromise;
+        await retailPoolPromise;
 
         console.log("Connected to SQL Server successfully!");
 

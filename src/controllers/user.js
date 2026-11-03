@@ -1,4 +1,4 @@
-import { sql, poolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 import createUser from "../helper/createUser.js";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
@@ -27,7 +27,7 @@ const UserController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool.request()
                 .input("id", sql.Int, Number(id))
@@ -43,7 +43,7 @@ const UserController = {
                     a.auth_number AS auth_id,
                     a.auth_number,
                     a.auth_name
-                FROM users AS u
+                FROM dbo.DelegateuserPermissions AS u
                 LEFT JOIN user_auth AS au
                     ON au.user_id = u.id
                 LEFT JOIN auth AS a
@@ -100,7 +100,7 @@ const UserController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool.request()
                 .input("id", sql.Int, Number(id))
@@ -114,7 +114,7 @@ const UserController = {
                     updated_at,
                     updated_by,
                     type
-                FROM dbo.users
+                FROM dbo.DelegateuserPermissions
                 WHERE id = @id;
             `);
 
@@ -165,7 +165,7 @@ const UserController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
             const request = pool.request();
 
             const searchCode =
@@ -195,7 +195,7 @@ const UserController = {
 
                 grandparent.auth_name AS grandparent_auth_name
 
-            FROM dbo.users AS u
+            FROM dbo.DelegateuserPermissions AS u
 
             LEFT JOIN dbo.user_auth AS au
                 ON au.user_id = u.id
@@ -354,7 +354,7 @@ const UserController = {
                     message: "Id, name, password, and updatedBy are required",
                 });
             }
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
             const existingUser = await pool
                 .request()
                 .input("id", sql.Int, Number(id))
@@ -374,7 +374,7 @@ const UserController = {
                 .input("updatedBy", sql.Int, Number(updatedBy))
                 .input("updatedAt", sql.DateTime, updatedAt)
                 .query(`
-                UPDATE users
+                UPDATE dbo.DelegateuserPermissions
                 SET
                     name = @name,
                     password = @passwordHash,
@@ -493,7 +493,7 @@ const UserController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -508,7 +508,7 @@ const UserController = {
                     a.auth_number AS authId,
                     a.auth_name AS authName,
                     a.parent_auth_id AS parentAuthId
-                FROM dbo.users AS u
+                FROM dbo.DelegateuserPermissions AS u
                 LEFT JOIN dbo.user_auth AS ua
                     ON ua.user_id = u.id
                 LEFT JOIN dbo.auth AS a

@@ -1,11 +1,11 @@
 
-import { sql, poolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 
 const AdvertisingCompanyController = {
     // GET ALL ADVERTISING COMPANIES
     getAllAdvertisingCompanies: async (req, res) => {
         try {
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool.request().query(`
             SELECT
@@ -39,7 +39,7 @@ const AdvertisingCompanyController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -83,7 +83,7 @@ const AdvertisingCompanyController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -127,7 +127,7 @@ const AdvertisingCompanyController = {
                 return res.status(200).json([]);
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()

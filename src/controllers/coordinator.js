@@ -1,4 +1,4 @@
-import { sql, poolPromise, retailPoolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 import {
     uploadCoordinatorPhotos,
     deleteCoordinatorImage,
@@ -118,7 +118,7 @@ const CoordinatorController = {
                 advertisingCompanyId,
             } = req.query;
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
             const request = pool.request();
             const conditions = [];
 
@@ -299,7 +299,7 @@ const CoordinatorController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -447,7 +447,7 @@ const CoordinatorController = {
                 }
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const existingCoordinator = await pool
                 .request()
@@ -901,7 +901,7 @@ VALUES (
                 }
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             // Get existing coordinator
             const existingResult = await pool
@@ -1182,7 +1182,7 @@ VALUES (
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()

@@ -1,7 +1,7 @@
 
 import sharp from "sharp";
 import crypto from "node:crypto";
-import { sql, poolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 import { nextcloudConfig } from "../config/nextcloud.js";
 import { COORDINATOR_PHOTO_FIELDS } from "../utils/imagePaths.js";
 
@@ -204,7 +204,7 @@ export async function uploadCoordinatorPhotos(
     coordinatorId,
     files = {}
 ) {
-    const pool = await poolPromise;
+    const pool = await retailPoolPromise;
 
     const coordinatorResult = await pool
         .request()

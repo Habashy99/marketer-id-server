@@ -1,4 +1,4 @@
-import { sql, poolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 
 function isValidDesign(design) {
     if (!design || typeof design !== "object" || Array.isArray(design)) {
@@ -49,7 +49,7 @@ const CardTemplateController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -89,7 +89,7 @@ const CardTemplateController = {
 
     getAllDesigns: async (req, res) => {
         try {
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool.request().query(`
             SELECT id, name, design
@@ -137,7 +137,7 @@ const CardTemplateController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -210,7 +210,7 @@ const CardTemplateController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -268,7 +268,7 @@ const CardTemplateController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()

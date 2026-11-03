@@ -1,6 +1,6 @@
 
 import jwt from "jsonwebtoken";
-import { sql, poolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 
 const authMiddleware = async (req, res, next) => {
     console.log("Auth diagnostic:", {
@@ -52,13 +52,13 @@ const authMiddleware = async (req, res, next) => {
     }
 
     try {
-        const pool = await poolPromise;
+        const pool = await retailPoolPromise;
 
         const result = await pool.request()
             .input("id", sql.Int, decoded.id)
             .query(`
                 SELECT id, code, name, type
-                FROM dbo.users
+                FROM dbo.DelegateuserPermissions
                 WHERE id = @id;
             `);
 

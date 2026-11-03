@@ -1,5 +1,5 @@
 
-import { sql, poolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 import getUserIdByCode from "../helper/getUserIdByCode.js";
 
 const AuthUserController = {
@@ -36,13 +36,13 @@ const AuthUserController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const userResult = await pool.request()
                 .input("code", sql.Int, userCode)
                 .query(`
                 SELECT id, type
-                FROM dbo.users
+                FROM dbo.DelegateuserPermissions
                 WHERE code = @code;
             `);
 
@@ -163,7 +163,7 @@ const AuthUserController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const existing = await pool.request()
                 .input("id", sql.Int, id)
@@ -266,7 +266,7 @@ const AuthUserController = {
                 return res.status(404).json({ message: "User not found." });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
             const request = pool.request().input("userId", sql.Int, userId);
 
             const placeholders = permissionIds.map((id, index) => {

@@ -1,10 +1,10 @@
 
-import { sql, poolPromise } from "../config/db.js";
+import { sql, retailPoolPromise } from "../config/db.js";
 
 const PrintLogController = {
     getAllLogs: async (req, res) => {
         try {
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool.request().query(`
             SELECT
@@ -61,7 +61,7 @@ const PrintLogController = {
             }
 
             const normalizedCode = String(code).trim();
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             transaction = new sql.Transaction(pool);
             await transaction.begin();
@@ -141,7 +141,7 @@ const PrintLogController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -196,7 +196,7 @@ const PrintLogController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -243,7 +243,7 @@ const PrintLogController = {
                 });
             }
 
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool
                 .request()
@@ -282,7 +282,7 @@ const PrintLogController = {
     },
     getTotalPrintedCards: async (req, res) => {
         try {
-            const pool = await poolPromise;
+            const pool = await retailPoolPromise;
 
             const result = await pool.request().query(`
             SELECT
