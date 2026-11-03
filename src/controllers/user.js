@@ -2,6 +2,7 @@ import { sql, retailPoolPromise } from "../config/db.js";
 import createUser from "../helper/createUser.js";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import encryptPassword from "../utils/encryptPassword.js";
 const cookieOptions = {
     httpOnly: true,
     secure: false,
@@ -469,10 +470,15 @@ const UserController = {
 
     },
 
+
     login: async (req, res) => {
+        let transaction;
+        let transactionStarted = false;
+
         try {
             const { code, password } = req.body;
 
+            // 1. Validate input.
             if (
                 code === undefined ||
                 code === null ||
@@ -495,64 +501,116 @@ const UserController = {
 
             const pool = await retailPoolPromise;
 
-            const result = await pool
+            // 2. Check the new users table first.
+            const existingResult = await pool
                 .request()
                 .input("code", sql.Int, numericCode)
                 .query(`
-                SELECT
-                    u.id,
-                    u.code,
-                    u.name,
-                    u.password,
-                    u.type,
-                    a.auth_number AS authId,
-                    a.auth_name AS authName,
-                    a.parent_auth_id AS parentAuthId
-                FROM dbo.DelegateuserPermissions AS u
-                LEFT JOIN dbo.user_auth AS ua
-                    ON ua.user_id = u.id
-                LEFT JOIN dbo.auth AS a
-                    ON a.auth_number = ua.auth_id
-                WHERE u.code = @code
-                ORDER BY a.auth_number;
+                SELECT id, code, name, password, type
+                FROM dbo.DelegateuserPermissions
+                WHERE code = @code;
             `);
 
-            const rows = result.recordset;
-            const dbUser = rows[0];
-            const passwordMatches = dbUser
-                ? await bcrypt.compare(password, dbUser.password)
-                : false;
-            console.log("Login diagnostic:", {
-                code: numericCode,
-                userFound: Boolean(dbUser),
-                passwordIsString: typeof dbUser?.password === "string",
-                passwordHashLength:
-                    typeof dbUser?.password === "string"
-                        ? dbUser.password.length
-                        : null,
-            });
-            if (
-                !dbUser ||
-                !passwordMatches) {
-                return res.status(401).json({
-                    message: "Invalid code or password",
+            let dbUser = existingResult.recordset[0];
+
+            if (dbUser) {
+                // Existing user: verify bcrypt password.
+                const passwordMatches = await bcrypt.compare(
+                    password,
+                    dbUser.password
+                );
+
+                if (!passwordMatches) {
+                    return res.status(401).json({
+                        message: "Invalid code or password",
+                    });
+                }
+            } else {
+                // 3. Find user in legacy table.
+                const legacyResult = await pool
+                    .request()
+                    .input("code", sql.Int, numericCode)
+                    .query(`
+                    SELECT userid, a_name, userpass
+                    FROM dbo.sys_login
+                    WHERE userid = @code;
+                `);
+
+                const legacyUser = legacyResult.recordset[0];
+
+                if (!legacyUser || !legacyUser.userpass) {
+                    return res.status(401).json({
+                        message: "Invalid code or password",
+                    });
+                }
+
+                // 4. Encrypt entered password using the legacy algorithm.
+                const encryptedInput = encryptPassword(password);
+
+                // Remove trailing SQL padding spaces only.
+                const storedPassword = legacyUser.userpass.replace(/\s+$/, "");
+                console.log("Legacy comparison diagnostic:", {
+                    userId: legacyUser.userid,
+                    inputLength: password.length,
+                    encryptedInputLength: encryptedInput.length,
+                    storedPasswordLength: storedPassword.length,
+                    matches: encryptedInput === storedPassword,
                 });
+                // 5. Compare encrypted password with legacy stored password.
+                const passwordMatches = encryptedInput === storedPassword;
+
+                if (!passwordMatches) {
+                    return res.status(401).json({
+                        message: "Invalid code or password",
+                    });
+                }
+
+                // 6. Hash password for the new system.
+                const hashedPassword = await bcrypt.hash(password, 12);
+
+                // 7. Migrate legacy user.
+                transaction = new sql.Transaction(pool);
+
+                await transaction.begin();
+                transactionStarted = true;
+
+                const insertResult = await new sql.Request(transaction)
+                    .input("code", sql.Int, legacyUser.userid)
+                    .input("name", sql.VarChar(255), legacyUser.a_name)
+                    .input("password", sql.NVarChar(255), hashedPassword)
+                    .input("createdBy", sql.Int, 1001)
+                    .query(`
+                    INSERT INTO dbo.DelegateuserPermissions
+                        (code, name, password, created_at, created_by, type)
+                    OUTPUT
+                        INSERTED.id,
+                        INSERTED.code,
+                        INSERTED.name,
+                        INSERTED.type
+                    VALUES
+                        (
+                            @code,
+                            @name,
+                            @password,
+                            GETDATE(),
+                            @createdBy,
+                            N'user'
+                        );
+                `);
+
+                dbUser = insertResult.recordset[0];
+
+                await transaction.commit();
+                transactionStarted = false;
             }
 
-            const auths = rows
-                .filter((row) => row.authId !== null)
-                .map((row) => ({
-                    authId: row.authId,
-                    authName: row.authName,
-                    parentAuthId: row.parentAuthId,
-                }));
-
+            // 8. Create JWT.
             const user = {
                 id: dbUser.id,
                 code: dbUser.code,
                 name: dbUser.name,
                 type: dbUser.type,
-                auths,
+                auths: [],
             };
 
             const token = jwt.sign(
@@ -561,23 +619,39 @@ const UserController = {
                     code: user.code,
                 },
                 process.env.JWT_SECRET,
-                { expiresIn: "11h" }
+                {
+                    expiresIn: "11h",
+                }
             );
+
+            // 9. Set HttpOnly cookie.
             res.cookie("accessToken", token, cookieOptions);
 
             return res.status(200).json({
                 message: "Login successful",
                 user,
             });
+
         } catch (error) {
+            if (transactionStarted && transaction) {
+                try {
+                    await transaction.rollback();
+                } catch (rollbackError) {
+                    console.error(
+                        "Transaction rollback error:",
+                        rollbackError
+                    );
+                }
+            }
+
             console.error("Login error:", error);
 
             return res.status(500).json({
                 message: "Login failed",
-                error: error.message,
             });
         }
     },
+
 
     logout: async (req, res) => {
         res.clearCookie("accessToken", {
