@@ -21,6 +21,14 @@ router.get(
 router.post(
     "/createCoordinator",
     authMiddleware,
+    upload.fields([
+        { name: "profilePicture", maxCount: 1 },
+        { name: "nationalIdPicture", maxCount: 1 },
+        { name: "healthCertificatePicture", maxCount: 1 },
+        { name: "companyAuthorizationPicture", maxCount: 1 },
+        { name: "socialInsurancePicture", maxCount: 1 },
+        { name: "supervisorNationalIdPicture", maxCount: 1 },
+    ]),
     CoordinatorController.createCoordinator
 );
 
