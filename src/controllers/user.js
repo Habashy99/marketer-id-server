@@ -10,7 +10,30 @@ const cookieOptions = {
     maxAge: 11 * 60 * 60 * 1000,
     path: "/",
 };
+
+async function getUserAuths(pool, userId) {
+    const result = await pool
+        .request()
+        .input("userId", sql.Int, Number(userId))
+        .query(`
+            SELECT
+                a.auth_number AS authNumber,
+                a.auth_name AS authName,
+                a.parent_auth_id AS parentAuthId,
+                p.auth_name AS parentAuthName
+            FROM dbo.user_auth AS ua
+            INNER JOIN dbo.auth AS a
+                ON a.auth_number = ua.auth_id
+            LEFT JOIN dbo.auth AS p
+                ON p.auth_number = a.parent_auth_id
+            WHERE ua.user_id = @userId
+            ORDER BY a.auth_number;
+        `);
+
+    return result.recordset;
+}
 const UserController = {
+
 
     getUserById: async (req, res) => {
         try {
@@ -91,21 +114,22 @@ const UserController = {
         }
     },
 
-    getCurrentUser: async (req, res) => {
-        try {
-            const id = req.user?.id;
+getCurrentUser: async (req, res) => {
+    try {
+        const id = req.user?.id;
 
-            if (!id) {
-                return res.status(401).json({
-                    message: "Authentication required",
-                });
-            }
+        if (!id) {
+            return res.status(401).json({
+                message: "Authentication required",
+            });
+        }
 
-            const pool = await retailPoolPromise;
+        const pool = await retailPoolPromise;
 
-            const result = await pool.request()
-                .input("id", sql.Int, Number(id))
-                .query(`
+        const result = await pool
+            .request()
+            .input("id", sql.Int, Number(id))
+            .query(`
                 SELECT
                     id,
                     code,
@@ -119,35 +143,38 @@ const UserController = {
                 WHERE id = @id;
             `);
 
-            if (result.recordset.length === 0) {
-                return res.status(401).json({
-                    message: "User not found",
-                });
-            }
-
-            const row = result.recordset[0];
-
-            return res.status(200).json({
-                user: {
-                    id: row.id,
-                    code: row.code,
-                    name: row.name,
-                    type: row.type,
-                    createdAt: row.created_at,
-                    createdBy: row.created_by,
-                    updatedAt: row.updated_at,
-                    updatedBy: row.updated_by,
-                    auths: [],
-                },
-            });
-        } catch (error) {
-            console.error("Get current user error:", error);
-
-            return res.status(500).json({
-                message: "Failed to get current user",
+        if (result.recordset.length === 0) {
+            return res.status(401).json({
+                message: "User not found",
             });
         }
-    },
+
+        const row = result.recordset[0];
+
+        const auths = await getUserAuths(pool, row.id);
+
+        return res.status(200).json({
+            user: {
+                id: row.id,
+                code: row.code,
+                name: row.name,
+                type: row.type,
+                createdAt: row.created_at,
+                createdBy: row.created_by,
+                updatedAt: row.updated_at,
+                updatedBy: row.updated_by,
+                auths,
+            },
+        });
+
+    } catch (error) {
+        console.error("Get current user error:", error);
+
+        return res.status(500).json({
+            message: "Failed to get current user",
+        });
+    }
+},
 
     getAllUsers: async (req, res) => {
         try {
@@ -603,14 +630,14 @@ const UserController = {
                 await transaction.commit();
                 transactionStarted = false;
             }
-
+const auths = await getUserAuths(pool, dbUser.id);
             // 8. Create JWT.
             const user = {
                 id: dbUser.id,
                 code: dbUser.code,
                 name: dbUser.name,
                 type: dbUser.type,
-                auths: [],
+                auths: auths,
             };
 
             const token = jwt.sign(
@@ -626,6 +653,7 @@ const UserController = {
 
             // 9. Set HttpOnly cookie.
             res.cookie("accessToken", token, cookieOptions);
+            
 
             return res.status(200).json({
                 message: "Login successful",
