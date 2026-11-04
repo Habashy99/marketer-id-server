@@ -7,6 +7,7 @@ const router = express.Router();
 
 router.get("/", authMiddleware, CardLogsController.getAllLogs);
 router.get("/total", authMiddleware, CardLogsController.getTotalQuantity);
+router.get("/totalDisbursed", authMiddleware, CardLogsController.getTotalDisbursedQuantity);
 router.post("/", authMiddleware, CardLogsController.createLog);
 router.delete("/:id", authMiddleware, CardLogsController.deleteLog);
 
