@@ -1,6 +1,5 @@
-
 import sql from "mssql";
-import {retailPoolPromise } from "../config/db.js";
+import { retailPoolPromise } from "../config/db.js";
 
 // ==========================================
 // GET SUPPLIER AND BRANCH NAMES
@@ -19,7 +18,9 @@ async function getRetailNames(coordinators) {
         ...new Set(
             coordinators
                 .map((item) => Number(item.mother_company))
-                .filter((id) => Number.isSafeInteger(id) && id > 0)
+                .filter(
+                    (id) => Number.isSafeInteger(id) && id > 0
+                )
         ),
     ];
 
@@ -27,14 +28,19 @@ async function getRetailNames(coordinators) {
         ...new Set(
             coordinators
                 .map((item) => Number(item.branch))
-                .filter((id) => Number.isSafeInteger(id) && id > 0)
+                .filter(
+                    (id) => Number.isSafeInteger(id) && id > 0
+                )
         ),
     ];
 
     const supplierMap = new Map();
     const branchMap = new Map();
 
-    // Get supplier names
+    // ==========================================
+    // GET SUPPLIER NAMES
+    // ==========================================
+
     if (supplierIds.length > 0) {
         const request = retailPool.request();
 
@@ -57,7 +63,10 @@ async function getRetailNames(coordinators) {
         });
     }
 
-    // Get branch names
+    // ==========================================
+    // GET BRANCH NAMES
+    // ==========================================
+
     if (branchIds.length > 0) {
         const request = retailPool.request();
 
@@ -96,6 +105,48 @@ async function getRetailNames(coordinators) {
 }
 
 // ==========================================
+// VALIDATION HELPERS
+// ==========================================
+
+function isValidId(value) {
+    return Number.isInteger(Number(value)) && Number(value) > 0;
+}
+
+function isValidDate(value) {
+    return (
+        typeof value === "string" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+        !Number.isNaN(Date.parse(value))
+    );
+}
+
+function isValidDateRange(fromDate, toDate) {
+    return fromDate <= toDate;
+}
+
+// ==========================================
+// GET COORDINATOR SELECT QUERY
+// ==========================================
+
+const coordinatorSelectQuery = `
+    SELECT
+        tc.id,
+        tc.name,
+        tc.mother_company,
+        tc.advertising_company_id,
+        ac.name AS advertising_company,
+        tc.national_id_number,
+        tc.branch,
+        tc.from_date,
+        tc.to_date,
+        tc.notes
+    FROM dbo.temporary_coordinator AS tc
+    LEFT JOIN dbo.advertising_companies AS ac
+        ON ac.id = tc.advertising_company_id
+        AND ac.isdeleted = 0
+`;
+
+// ==========================================
 // TEMPORARY COORDINATOR CONTROLLER
 // ==========================================
 
@@ -115,9 +166,9 @@ const TemporaryCoordinatorController = {
                 branch,
                 from_date,
                 to_date,
+                notes,
             } = req.body;
 
-            // Validate required fields
             if (
                 typeof name !== "string" ||
                 !name.trim() ||
@@ -127,41 +178,37 @@ const TemporaryCoordinatorController = {
                 !national_id_number.trim() ||
                 typeof branch !== "string" ||
                 !branch.trim() ||
-                !advertising_company_id ||
-                !from_date ||
-                !to_date
+                !isValidId(advertising_company_id) ||
+                !isValidDate(from_date) ||
+                !isValidDate(to_date)
             ) {
                 return res.status(400).json({
-                    message: "All fields are required.",
+                    message: "Please provide all required fields.",
                 });
             }
 
-            const companyId = Number(advertising_company_id);
-
-            if (!Number.isInteger(companyId) || companyId <= 0) {
-                return res.status(400).json({
-                    message: "Invalid advertising company ID.",
-                });
-            }
-
-            if (
-                Number.isNaN(Date.parse(from_date)) ||
-                Number.isNaN(Date.parse(to_date))
-            ) {
-                return res.status(400).json({
-                    message: "Invalid date.",
-                });
-            }
-
-            if (new Date(to_date) < new Date(from_date)) {
+            if (!isValidDateRange(from_date, to_date)) {
                 return res.status(400).json({
                     message: "The end date cannot be before the start date.",
                 });
             }
 
+            if (
+                notes !== undefined &&
+                notes !== null &&
+                typeof notes !== "string"
+            ) {
+                return res.status(400).json({
+                    message: "Invalid notes value.",
+                });
+            }
+
             const pool = await retailPoolPromise;
 
-            // Insert coordinator
+            if (!pool) {
+                throw new Error("Database unavailable.");
+            }
+
             const result = await pool
                 .request()
                 .input("name", sql.NVarChar(150), name.trim())
@@ -170,7 +217,11 @@ const TemporaryCoordinatorController = {
                     sql.NVarChar(150),
                     mother_company.trim()
                 )
-                .input("advertising_company_id", sql.Int, companyId)
+                .input(
+                    "advertising_company_id",
+                    sql.Int,
+                    Number(advertising_company_id)
+                )
                 .input(
                     "national_id_number",
                     sql.NVarChar(20),
@@ -179,6 +230,11 @@ const TemporaryCoordinatorController = {
                 .input("branch", sql.NVarChar(150), branch.trim())
                 .input("from_date", sql.Date, from_date)
                 .input("to_date", sql.Date, to_date)
+                .input(
+                    "notes",
+                    sql.NVarChar(sql.MAX),
+                    notes?.trim() || null
+                )
                 .query(`
                     INSERT INTO dbo.temporary_coordinator (
                         name,
@@ -187,7 +243,8 @@ const TemporaryCoordinatorController = {
                         national_id_number,
                         branch,
                         from_date,
-                        to_date
+                        to_date,
+                        notes
                     )
                     OUTPUT INSERTED.id
                     VALUES (
@@ -197,34 +254,22 @@ const TemporaryCoordinatorController = {
                         @national_id_number,
                         @branch,
                         @from_date,
-                        @to_date
+                        @to_date,
+                        @notes
                     );
                 `);
 
             const newId = result.recordset[0].id;
 
-            // Get created coordinator
             const coordinatorResult = await pool
                 .request()
                 .input("id", sql.Int, newId)
                 .query(`
-                    SELECT
-                        tc.id,
-                        tc.name,
-                        tc.mother_company,
-                        tc.advertising_company_id,
-                        ac.name AS advertising_company,
-                        tc.national_id_number,
-                        tc.branch,
-                        tc.from_date,
-                        tc.to_date
-                    FROM dbo.temporary_coordinator AS tc
-                    LEFT JOIN dbo.advertising_companies AS ac
-                        ON ac.id = tc.advertising_company_id
-                    WHERE tc.id = @id;
+                    ${coordinatorSelectQuery}
+                    WHERE tc.id = @id
+                      AND tc.isdeleted = 0;
                 `);
 
-            // Resolve supplier and branch names
             const coordinators = await getRetailNames(
                 coordinatorResult.recordset
             );
@@ -258,25 +303,14 @@ const TemporaryCoordinatorController = {
             const pool = await retailPoolPromise;
 
             const result = await pool.request().query(`
-            SELECT
-                tc.id,
-                tc.name,
-                tc.mother_company,
-                tc.advertising_company_id,
-                ac.name AS advertising_company,
-                tc.national_id_number,
-                tc.branch,
-                tc.from_date,
-                tc.to_date
-            FROM dbo.temporary_coordinator AS tc
-            LEFT JOIN dbo.advertising_companies AS ac
-                ON ac.id = tc.advertising_company_id
-                AND ac.isdeleted = 0
-            WHERE tc.isdeleted = 0
-            ORDER BY tc.id DESC;
-        `);
+                ${coordinatorSelectQuery}
+                WHERE tc.isdeleted = 0
+                ORDER BY tc.id DESC;
+            `);
 
-            const coordinators = await getRetailNames(result.recordset);
+            const coordinators = await getRetailNames(
+                result.recordset
+            );
 
             return res.status(200).json({
                 message: "Temporary coordinators retrieved successfully.",
@@ -300,7 +334,7 @@ const TemporaryCoordinatorController = {
         try {
             const { id } = req.params;
 
-            if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+            if (!isValidId(id)) {
                 return res.status(400).json({
                     message: "Invalid temporary coordinator ID.",
                 });
@@ -312,23 +346,10 @@ const TemporaryCoordinatorController = {
                 .request()
                 .input("id", sql.Int, Number(id))
                 .query(`
-                SELECT
-                    tc.id,
-                    tc.name,
-                    tc.mother_company,
-                    tc.advertising_company_id,
-                    ac.name AS advertising_company,
-                    tc.national_id_number,
-                    tc.branch,
-                    tc.from_date,
-                    tc.to_date
-                FROM dbo.temporary_coordinator AS tc
-                LEFT JOIN dbo.advertising_companies AS ac
-                    ON ac.id = tc.advertising_company_id
-                    AND ac.isdeleted = 0
-                WHERE tc.id = @id
-                  AND tc.isdeleted = 0;
-            `);
+                    ${coordinatorSelectQuery}
+                    WHERE tc.id = @id
+                      AND tc.isdeleted = 0;
+                `);
 
             if (result.recordset.length === 0) {
                 return res.status(404).json({
@@ -336,7 +357,9 @@ const TemporaryCoordinatorController = {
                 });
             }
 
-            const coordinators = await getRetailNames(result.recordset);
+            const coordinators = await getRetailNames(
+                result.recordset
+            );
 
             return res.status(200).json({
                 message: "Temporary coordinator retrieved successfully.",
@@ -360,7 +383,7 @@ const TemporaryCoordinatorController = {
         try {
             const { id } = req.params;
 
-            if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+            if (!isValidId(id)) {
                 return res.status(400).json({
                     message: "Invalid temporary coordinator ID.",
                 });
@@ -374,7 +397,37 @@ const TemporaryCoordinatorController = {
                 branch,
                 from_date,
                 to_date,
+                notes,
             } = req.body;
+
+            const pool = await retailPoolPromise;
+
+            const request = pool.request();
+
+            request.input("id", sql.Int, Number(id));
+
+            // ==========================================
+            // GET EXISTING RECORD
+            // ==========================================
+
+            const existingResult = await request.query(`
+                SELECT *
+                FROM dbo.temporary_coordinator
+                WHERE id = @id
+                  AND isdeleted = 0;
+            `);
+
+            if (existingResult.recordset.length === 0) {
+                return res.status(404).json({
+                    message: "Temporary coordinator not found.",
+                });
+            }
+
+            const existing = existingResult.recordset[0];
+
+            // ==========================================
+            // PREPARE UPDATE FIELDS
+            // ==========================================
 
             const fields = {
                 name: {
@@ -405,6 +458,10 @@ const TemporaryCoordinatorController = {
                     value: to_date,
                     type: sql.Date,
                 },
+                notes: {
+                    value: notes,
+                    type: sql.NVarChar(sql.MAX),
+                },
             };
 
             const updates = Object.entries(fields).filter(
@@ -418,7 +475,10 @@ const TemporaryCoordinatorController = {
                 });
             }
 
-            // Validate text fields
+            // ==========================================
+            // VALIDATE TEXT FIELDS
+            // ==========================================
+
             for (const key of [
                 "name",
                 "mother_company",
@@ -438,30 +498,45 @@ const TemporaryCoordinatorController = {
                 }
             }
 
-            // Validate advertising company ID
+            // ==========================================
+            // VALIDATE NOTES
+            // ==========================================
+
+            if (
+                Object.prototype.hasOwnProperty.call(req.body, "notes") &&
+                notes !== null &&
+                notes !== undefined &&
+                typeof notes !== "string"
+            ) {
+                return res.status(400).json({
+                    message: "Invalid notes value.",
+                });
+            }
+
+            // ==========================================
+            // VALIDATE ADVERTISING COMPANY
+            // ==========================================
+
             if (
                 Object.prototype.hasOwnProperty.call(
                     req.body,
                     "advertising_company_id"
                 ) &&
-                (
-                    !Number.isInteger(Number(advertising_company_id)) ||
-                    Number(advertising_company_id) <= 0
-                )
+                !isValidId(advertising_company_id)
             ) {
                 return res.status(400).json({
                     message: "Invalid advertising company ID.",
                 });
             }
 
-            // Validate dates
+            // ==========================================
+            // VALIDATE DATES
+            // ==========================================
+
             for (const key of ["from_date", "to_date"]) {
                 if (
                     Object.prototype.hasOwnProperty.call(req.body, key) &&
-                    (
-                        !req.body[key] ||
-                        Number.isNaN(Date.parse(req.body[key]))
-                    )
+                    !isValidDate(req.body[key])
                 ) {
                     return res.status(400).json({
                         message: `Invalid ${key}.`,
@@ -469,58 +544,58 @@ const TemporaryCoordinatorController = {
                 }
             }
 
-            const pool = await retailPoolPromise;
-
-            const request = pool.request();
-            request.input("id", sql.Int, Number(id));
-
-            // Get existing record
-            const existingResult = await request.query(`
-                SELECT *
-                FROM dbo.temporary_coordinator
-                WHERE id = @id;
-            `);
-
-            if (existingResult.recordset.length === 0) {
-                return res.status(404).json({
-                    message: "Temporary coordinator not found.",
-                });
-            }
-
-            const existing = existingResult.recordset[0];
-
             const finalFromDate = Object.prototype.hasOwnProperty.call(
                 req.body,
                 "from_date"
             )
                 ? from_date
-                : existing.from_date;
+                : existing.from_date.toISOString().slice(0, 10);
 
             const finalToDate = Object.prototype.hasOwnProperty.call(
                 req.body,
                 "to_date"
             )
                 ? to_date
-                : existing.to_date;
+                : existing.to_date.toISOString().slice(0, 10);
 
-            if (new Date(finalToDate) < new Date(finalFromDate)) {
+            if (
+                !isValidDateRange(
+                    String(finalFromDate).slice(0, 10),
+                    String(finalToDate).slice(0, 10)
+                )
+            ) {
                 return res.status(400).json({
                     message: "The end date cannot be before the start date.",
                 });
             }
 
-            // Build update query
+            // ==========================================
+            // BUILD UPDATE QUERY
+            // ==========================================
+
             const setClauses = [];
 
             updates.forEach(([key, field], index) => {
                 const parameterName = `value${index}`;
 
+                let value = field.value;
+
+                if (typeof value === "string") {
+                    value = value.trim();
+                }
+
+                if (key === "notes" && !value) {
+                    value = null;
+                }
+
+                if (key === "advertising_company_id") {
+                    value = Number(value);
+                }
+
                 request.input(
                     parameterName,
                     field.type,
-                    typeof field.value === "string"
-                        ? field.value.trim()
-                        : field.value
+                    value
                 );
 
                 setClauses.push(`${key} = @${parameterName}`);
@@ -529,29 +604,28 @@ const TemporaryCoordinatorController = {
             await request.query(`
                 UPDATE dbo.temporary_coordinator
                 SET ${setClauses.join(", ")}
-                WHERE id = @id;
+                WHERE id = @id
+                  AND isdeleted = 0;
             `);
 
-            // Get updated record
+            // ==========================================
+            // GET UPDATED RECORD
+            // ==========================================
+
             const updatedResult = await pool
                 .request()
                 .input("id", sql.Int, Number(id))
                 .query(`
-                    SELECT
-                        tc.id,
-                        tc.name,
-                        tc.mother_company,
-                        tc.advertising_company_id,
-                        ac.name AS advertising_company,
-                        tc.national_id_number,
-                        tc.branch,
-                        tc.from_date,
-                        tc.to_date
-                    FROM dbo.temporary_coordinator AS tc
-                    LEFT JOIN dbo.advertising_companies AS ac
-                        ON ac.id = tc.advertising_company_id
-                    WHERE tc.id = @id;
+                    ${coordinatorSelectQuery}
+                    WHERE tc.id = @id
+                      AND tc.isdeleted = 0;
                 `);
+
+            if (updatedResult.recordset.length === 0) {
+                return res.status(404).json({
+                    message: "Temporary coordinator not found.",
+                });
+            }
 
             const coordinators = await getRetailNames(
                 updatedResult.recordset
@@ -585,7 +659,7 @@ const TemporaryCoordinatorController = {
         try {
             const { id } = req.params;
 
-            if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+            if (!isValidId(id)) {
                 return res.status(400).json({
                     message: "Invalid temporary coordinator ID.",
                 });
@@ -597,13 +671,13 @@ const TemporaryCoordinatorController = {
                 .request()
                 .input("id", sql.Int, Number(id))
                 .query(`
-                UPDATE dbo.temporary_coordinator
-                SET isdeleted = 1
-                WHERE id = @id
-                  AND isdeleted = 0;
+                    UPDATE dbo.temporary_coordinator
+                    SET isdeleted = 1
+                    WHERE id = @id
+                      AND isdeleted = 0;
 
-                SELECT @@ROWCOUNT AS affectedRows;
-            `);
+                    SELECT @@ROWCOUNT AS affectedRows;
+                `);
 
             if (result.recordset[0].affectedRows === 0) {
                 return res.status(404).json({
