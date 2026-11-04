@@ -344,6 +344,9 @@ const CoordinatorController = {
     },
 
     createCoordinator: async (req, res) => {
+        let coordinatorId = null;
+        let uploadedPhotoPaths = {};
+
         try {
             const {
                 code,
@@ -365,16 +368,13 @@ const CoordinatorController = {
                 supervisor_name,
                 number_of_print_copies,
                 security_situation,
-                profile_picture,
-                national_id_picture,
-                health_certificate_picture,
-                company_authorization_picture,
-                social_insurance_picture,
-                supervisor_national_id_picture,
                 states,
             } = req.body;
+
             const supplierId = String(company_name ?? "").trim();
             const branchId = String(branch ?? "").trim();
+
+            // Validate required fields
             if (
                 code === undefined ||
                 code === null ||
@@ -401,6 +401,7 @@ const CoordinatorController = {
                 });
             }
 
+            // Validate number of print copies
             if (
                 number_of_print_copies !== undefined &&
                 number_of_print_copies !== null &&
@@ -418,6 +419,7 @@ const CoordinatorController = {
                 });
             }
 
+            // Validate date fields
             const dateFields = {
                 health_certificate_issuance_date,
                 health_certificate_expiry_date,
@@ -449,6 +451,7 @@ const CoordinatorController = {
 
             const pool = await retailPoolPromise;
 
+            // Check duplicate coordinator code
             const existingCoordinator = await pool
                 .request()
                 .input("code", sql.Int, Number(code))
@@ -464,21 +467,14 @@ const CoordinatorController = {
                 });
             }
 
+            // Create coordinator first
             const result = await pool
                 .request()
                 .input("code", sql.Int, Number(code))
                 .input("name", sql.NVarChar(255), name.trim())
                 .input("job", sql.NVarChar(255), job || null)
-                .input(
-                    "companyName",
-                    sql.NVarChar(255),
-                    supplierId
-                )
-                .input(
-                    "branch",
-                    sql.NVarChar(255),
-                    branchId
-                )
+                .input("companyName", sql.NVarChar(255), supplierId)
+                .input("branch", sql.NVarChar(255), branchId)
                 .input(
                     "emailDiscount",
                     sql.NVarChar(100),
@@ -533,66 +529,36 @@ const CoordinatorController = {
                     sql.NVarChar(100),
                     security_situation || null
                 )
-                .input(
-                    "profilePicture",
-                    sql.NVarChar(sql.MAX),
-                    profile_picture ?? null
-                )
-                .input(
-                    "nationalIdPicture",
-                    sql.NVarChar(sql.MAX),
-                    national_id_picture ?? null
-                )
-                .input(
-                    "healthCertificatePicture",
-                    sql.NVarChar(sql.MAX),
-                    health_certificate_picture ?? null
-                )
-                .input(
-                    "companyAuthorizationPicture",
-                    sql.NVarChar(sql.MAX),
-                    company_authorization_picture ?? null
-                )
-                .input(
-                    "socialInsurancePicture",
-                    sql.NVarChar(sql.MAX),
-                    social_insurance_picture ?? null
-                )
-                .input(
-                    "supervisorNationalIdPicture",
-                    sql.NVarChar(sql.MAX),
-                    supervisor_national_id_picture ?? null
-                )
                 .input("state", sql.NVarChar(100), states || null)
                 .query(`
-INSERT INTO dbo.coordinator (
-    code,
-    name,
-    job,
-    company_name,
-    branch,
-    email_discount,
-    health_certificate_issuance_date,
-    health_certificate_expiry_date,
-    national_id_number,
-    mobile,
-    governorate,
-    notes,
-    id_issuance_date,
-    id_expiry_date,
-    created_by,
-    address,
-    supervisor_name,
-    number_of_print_copies,
-    security_situation,
-    profile_picture,
-    national_id_picture,
-    health_certificate_picture,
-    company_authorization_picture,
-    social_insurance_picture,
-    supervisor_national_id_picture,
-    states
-)
+                INSERT INTO dbo.coordinator (
+                    code,
+                    name,
+                    job,
+                    company_name,
+                    branch,
+                    email_discount,
+                    health_certificate_issuance_date,
+                    health_certificate_expiry_date,
+                    national_id_number,
+                    mobile,
+                    governorate,
+                    notes,
+                    id_issuance_date,
+                    id_expiry_date,
+                    created_by,
+                    address,
+                    supervisor_name,
+                    number_of_print_copies,
+                    security_situation,
+                    profile_picture,
+                    national_id_picture,
+                    health_certificate_picture,
+                    company_authorization_picture,
+                    social_insurance_picture,
+                    supervisor_national_id_picture,
+                    states
+                )
                 OUTPUT
                     INSERTED.id,
                     INSERTED.code,
@@ -600,42 +566,123 @@ INSERT INTO dbo.coordinator (
                     INSERTED.company_name,
                     INSERTED.created_by,
                     INSERTED.states
-VALUES (
-    @code,
-    @name,
-    @job,
-    @companyName,
-    @branch,
-    @emailDiscount,
-    @healthCertificateIssuanceDate,
-    @healthCertificateExpiryDate,
-    @nationalIdNumber,
-    @mobile,
-    @governorate,
-    @notes,
-    @idIssuanceDate,
-    @idExpiryDate,
-    @createdBy,
-    @address,
-    @supervisorName,
-    @numberOfPrintCopies,
-    @securitySituation,
-    @profilePicture,
-    @nationalIdPicture,
-    @healthCertificatePicture,
-    @companyAuthorizationPicture,
-    @socialInsurancePicture,
-    @supervisorNationalIdPicture,
-    @state
-);
+                VALUES (
+                    @code,
+                    @name,
+                    @job,
+                    @companyName,
+                    @branch,
+                    @emailDiscount,
+                    @healthCertificateIssuanceDate,
+                    @healthCertificateExpiryDate,
+                    @nationalIdNumber,
+                    @mobile,
+                    @governorate,
+                    @notes,
+                    @idIssuanceDate,
+                    @idExpiryDate,
+                    @createdBy,
+                    @address,
+                    @supervisorName,
+                    @numberOfPrintCopies,
+                    @securitySituation,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    @state
+                );
+            `);
+
+            coordinatorId = result.recordset[0].id;
+
+            // Upload coordinator photos to Nextcloud
+            uploadedPhotoPaths = await uploadCoordinatorPhotos(
+                coordinatorId,
+                req.files ?? {}
+            );
+
+            // Update photo paths in SQL Server
+            const photoEntries = Object.entries(uploadedPhotoPaths);
+
+            if (photoEntries.length > 0) {
+                const updateRequest = pool.request();
+
+                updateRequest.input("id", sql.Int, coordinatorId);
+
+                const setClauses = photoEntries.map(
+                    ([columnName, photoPath], index) => {
+                        if (
+                            !Object.values(COORDINATOR_PHOTO_FIELDS).includes(
+                                columnName
+                            )
+                        ) {
+                            throw new Error(
+                                `Invalid coordinator photo column: ${columnName}`
+                            );
+                        }
+
+                        updateRequest.input(
+                            `photo${index}`,
+                            sql.NVarChar(sql.MAX),
+                            photoPath
+                        );
+
+                        return `[${columnName}] = @photo${index}`;
+                    }
+                );
+
+                await updateRequest.query(`
+                UPDATE dbo.coordinator
+                SET ${setClauses.join(", ")}
+                WHERE id = @id;
+            `);
+            }
+
+            // Return created coordinator with photo paths
+            const coordinatorResult = await pool
+                .request()
+                .input("id", sql.Int, coordinatorId)
+                .query(`
+                SELECT *
+                FROM dbo.coordinator
+                WHERE id = @id;
             `);
 
             return res.status(201).json({
                 message: "Coordinator created successfully",
-                coordinator: result.recordset[0],
+                coordinator: coordinatorResult.recordset[0],
             });
+
         } catch (error) {
             console.error("Create coordinator error:", error);
+
+            // If the coordinator was already inserted, roll back its database row
+            if (coordinatorId !== null) {
+                try {
+                    const pool = await retailPoolPromise;
+
+                    await pool
+                        .request()
+                        .input("id", sql.Int, coordinatorId)
+                        .query(`
+                        DELETE FROM dbo.coordinator
+                        WHERE id = @id;
+                    `);
+                } catch (deleteError) {
+                    console.error(
+                        "Failed to delete coordinator after creation error:",
+                        deleteError
+                    );
+                }
+            }
+
+            // Delete uploaded Nextcloud photos
+            await Promise.allSettled(
+                Object.values(uploadedPhotoPaths).map(deleteCoordinatorImage)
+            );
 
             if (error.number === 2627 || error.number === 2601) {
                 return res.status(409).json({
@@ -643,7 +690,7 @@ VALUES (
                 });
             }
 
-            return res.status(500).json({
+            return res.status(error.status || 500).json({
                 message: "Failed to create coordinator",
                 error: error.message,
             });
