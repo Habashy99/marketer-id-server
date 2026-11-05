@@ -37,6 +37,13 @@ const allowedOrigins = new Set([
     "http://localhost:5173",
     "http://127.0.0.1:3000",
     "http://localhost:3000",
+    "http://127.0.0.1:8080",
+    "http://localhost:8080",
+    "https://mk.gomlamarket.com",
+    ...(process.env.CORS_ORIGINS || "")
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean),
 ]);
 
 app.use(
@@ -137,8 +144,10 @@ async function startServer() {
 
         console.log("Connected to SQL Server successfully!");
 
-        app.listen(port, "127.0.0.1", () => {
-            console.log(`Server running on http://127.0.0.1:${port}`);
+        const host = process.env.HOST || "0.0.0.0";
+
+        app.listen(port, host, () => {
+            console.log(`Server running on http://${host}:${port}`);
         });
     } catch (error) {
         console.error(
