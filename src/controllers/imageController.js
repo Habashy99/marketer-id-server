@@ -20,14 +20,19 @@ function normalizePhotoPath(photoPath) {
         throw new Error("Photo path is required.");
     }
 
-    const normalizedPath = photoPath.replace(/\\/g, "/");
+    const normalizedPath = photoPath.trim().replace(/\\/g, "/");
+
+    const expectedPrefix = `${rootFolder.replace(/\/+$/, "")}/coordinators/`;
 
     if (
         normalizedPath.startsWith("/") ||
         normalizedPath.split("/").some(
-            (segment) => !segment || segment === "." || segment === ".."
+            (segment) =>
+                !segment ||
+                segment === "." ||
+                segment === ".."
         ) ||
-        !normalizedPath.startsWith(`${rootFolder}/coordinators/`)
+        !normalizedPath.startsWith(expectedPrefix)
     ) {
         throw new Error("Invalid coordinator photo path.");
     }
@@ -200,10 +205,7 @@ export async function uploadCoordinatorImage(
     return relativePath;
 }
 
-export async function uploadCoordinatorPhotos(
-    coordinatorId,
-    files = {}
-) {
+export async function uploadCoordinatorPhotos(coordinatorId, files = {}) {
     const pool = await retailPoolPromise;
 
     const coordinatorResult = await pool
@@ -223,38 +225,55 @@ export async function uploadCoordinatorPhotos(
         throw error;
     }
 
-    const uploadedPaths = {};
-
-    try {
-        for (const [fieldName, columnName] of Object.entries(
-            COORDINATOR_PHOTO_FIELDS
-        )) {
+    const photoTasks = Object.entries(COORDINATOR_PHOTO_FIELDS)
+        .map(([fieldName, columnName]) => {
             const fileValue = files[fieldName];
             const file = Array.isArray(fileValue)
                 ? fileValue[0]
                 : fileValue;
 
-            if (!file) continue;
+            if (!file) return null;
 
-            const processedBuffer = await processImage(file.buffer);
+            return async () => {
+                const processedBuffer = await processImage(file.buffer);
 
-            const path = await uploadCoordinatorImage(
-                String(coordinator.code),
-                fieldName,
-                processedBuffer
-            );
+                const path = await uploadCoordinatorImage(
+                    String(coordinator.code),
+                    fieldName,
+                    processedBuffer
+                );
 
-            uploadedPaths[columnName] = path;
+                return { columnName, path };
+            };
+        })
+        .filter(Boolean);
+
+    // Process and upload all selected photos concurrently.
+    const results = await Promise.allSettled(
+        photoTasks.map((task) => task())
+    );
+
+    const uploadedPaths = {};
+
+    for (const result of results) {
+        if (result.status === "fulfilled") {
+            uploadedPaths[result.value.columnName] = result.value.path;
         }
+    }
 
-        return uploadedPaths;
-    } catch (error) {
+    const failedUpload = results.find(
+        (result) => result.status === "rejected"
+    );
+
+    if (failedUpload) {
         await Promise.allSettled(
             Object.values(uploadedPaths).map(deleteCoordinatorImage)
         );
 
-        throw error;
+        throw failedUpload.reason;
     }
+
+    return uploadedPaths;
 }
 
 export async function getCoordinatorPhoto(req, res) {

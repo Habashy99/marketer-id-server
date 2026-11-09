@@ -1213,51 +1213,80 @@ const CoordinatorController = {
         }
     },
 
-    getCoordinatorByCode: async (req, res) => {
-        try {
-            const { code } = req.params;
+getCoordinatorByCode: async (req, res) => {
+    try {
+        const { code } = req.params;
 
-            if (
-                !code ||
-                !/^\d+$/.test(code.trim()) ||
-                !Number.isSafeInteger(Number(code)) ||
-                Number(code) <= 0 ||
-                Number(code) > 2147483647
-            ) {
-                return res.status(400).json({
-                    message: "Invalid coordinator code",
-                });
-            }
+        if (
+            !code ||
+            !/^\d+$/.test(code.trim()) ||
+            !Number.isSafeInteger(Number(code)) ||
+            Number(code) <= 0 ||
+            Number(code) > 2147483647
+        ) {
+            return res.status(400).json({
+                message: "Invalid coordinator code",
+            });
+        }
 
-            const pool = await retailPoolPromise;
+        const pool = await retailPoolPromise;
 
-            const result = await pool
-                .request()
-                .input("code", sql.Int, Number(code.trim()))
-                .query(`
-                SELECT *
+        const result = await pool
+            .request()
+            .input("code", sql.Int, Number(code.trim()))
+            .query(`
+                SELECT
+                    code,
+                    name,
+                    company_name,
+                    job,
+                    national_id_number,
+                    id_expiry_date,
+
+                    -- Coordinator photo paths
+                    profile_picture,
+                    national_id_picture,
+                    health_certificate_picture,
+                    company_authorization_picture,
+                    social_insurance_picture,
+                    supervisor_national_id_picture
+
                 FROM dbo.coordinator
                 WHERE code = @code;
             `);
 
-            if (result.recordset.length === 0) {
-                return res.status(404).json({
-                    message: "Coordinator not found",
-                });
-            }
-
-            return res.status(200).json({
-                message: "Coordinator retrieved successfully",
-                coordinator: result.recordset[0],
-            });
-        } catch (error) {
-            console.error("Get coordinator by code error:", error);
-
-            return res.status(500).json({
-                message: "Failed to retrieve coordinator",
+        if (result.recordset.length === 0) {
+            return res.status(404).json({
+                message: "Coordinator not found",
             });
         }
-    },
+
+        const coordinator = result.recordset[0];
+
+        console.log("Coordinator retrieved:", {
+            code: coordinator.code,
+            profile_picture: coordinator.profile_picture,
+            photoFields: Object.fromEntries(
+                Object.entries(coordinator).filter(([key]) =>
+                    /picture|photo/i.test(key)
+                )
+            ),
+        });
+
+        return res.status(200).json({
+            message: "Coordinator retrieved successfully",
+            coordinator,
+        });
+
+    } catch (error) {
+        console.error("Get coordinator by code error:", error);
+
+        return res.status(500).json({
+            message: "Failed to retrieve coordinator",
+            error: error.message,
+        });
+    }
+},
 }
 
 export default CoordinatorController;
