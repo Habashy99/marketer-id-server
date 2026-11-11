@@ -1,15 +1,25 @@
-
 import { sql, retailPoolPromise } from "../config/db.js";
 
 const requirePermission = (authNumber) => {
     return async (req, res, next) => {
         try {
+            // Authentication check
             if (!req.user?.id) {
                 return res.status(401).json({
                     message: "Authentication required.",
                 });
             }
 
+            // Admin bypass: admins have full access
+            if (
+                String(req.user.type || "")
+                    .trim()
+                    .toLowerCase() === "admin"
+            ) {
+                return next();
+            }
+
+            // Regular users must have the requested permission
             const pool = await retailPoolPromise;
 
             const result = await pool

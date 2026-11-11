@@ -1,51 +1,91 @@
-import dotenv from "dotenv";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+
 import sql from "mssql";
+import dotenv from "dotenv";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+dotenv.config();
 
-dotenv.config({
-    path: path.resolve(__dirname, "../../.env"),
-});
+/* -------------------------------------------------------------------------- */
+/* Retail Database Configuration                                              */
+/* -------------------------------------------------------------------------- */
 
-const createDatabaseConfig = (prefix) => {
-    const isDefault = prefix === "DB";
+const retailConfig = {
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    server: process.env.DB_SERVER,
+    port: process.env.DB_PORT
+        ? Number(process.env.DB_PORT)
+        : undefined,
+    database: process.env.DB_NAME,
 
-    const config = {
-        server: process.env[`${prefix}_SERVER`],
-        port: Number(process.env[`${prefix}_PORT`]),
-        database: process.env[`${prefix}_NAME`],
-        user: process.env[`${prefix}_USER`],
-        password: process.env[`${prefix}_PASSWORD`],
+    options: {
+        encrypt: false,
+        trustServerCertificate: true,
+    },
 
-        options: {
-            encrypt: false,
-            trustServerCertificate: true,
-        },
+    pool: {
+        max: 10,
+        min: 0,
+        idleTimeoutMillis: 30000,
+    },
 
-        connectionTimeout: 30000,
-        requestTimeout: 30000,
-        pool: {
-            max: 10,
-            min: 0,
-            idleTimeoutMillis: 30000,
-        },
-    };
-
-    const instanceName = process.env[`${prefix}_INSTANCE`];
-
-    if (instanceName) {
-        config.options.instanceName = instanceName;
-    }
-
-    return config;
+    connectionTimeout: 30000,
+    requestTimeout: 30000,
 };
 
+/* -------------------------------------------------------------------------- */
+/* Validate Configuration                                                     */
+/* -------------------------------------------------------------------------- */
 
-const dbConfig = createDatabaseConfig("DB");
+const requiredEnv = [
+    "DB_USER",
+    "DB_PASSWORD",
+    "DB_SERVER",
+    "DB_NAME",
+];
 
-export const retailPoolPromise = new sql.ConnectionPool(dbConfig).connect();
+const missingEnv = requiredEnv.filter(
+    (key) => !process.env[key]
+);
+
+if (missingEnv.length > 0) {
+    throw new Error(
+        `Missing database environment variables: ${missingEnv.join(", ")}`
+    );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Retail Connection Pool                                                     */
+/* -------------------------------------------------------------------------- */
+
+const retailPool = new sql.ConnectionPool(retailConfig);
+
+export const retailPoolPromise = retailPool.connect();
+
+/* -------------------------------------------------------------------------- */
+/* Connection Diagnostics                                                     */
+/* -------------------------------------------------------------------------- */
+
+retailPoolPromise
+    .then((pool) => {
+        console.log("Retail DB connected successfully:", {
+            database: pool.config.database,
+            server: pool.config.server,
+            port: pool.config.port,
+        });
+    })
+    .catch((error) => {
+        console.error(
+            "Retail DB connection failed:",
+            error.message
+        );
+    });
+
+retailPool.on("error", (error) => {
+    console.error("Retail DB pool error:", error.message);
+});
+
+/* -------------------------------------------------------------------------- */
+/* Exports                                                                    */
+/* -------------------------------------------------------------------------- */
 
 export { sql };

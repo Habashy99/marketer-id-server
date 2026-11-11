@@ -20,6 +20,7 @@ import cookieParser from "cookie-parser";
 import temporaryCoordinator from "./routes/temporaryCoordinator.js";
 import advertisingCompany from "./routes/advertisingCompany.js";
 import retailRoutes from "./routes/retail.js";
+import securityRoutes from "./routes/security.js";
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -77,6 +78,7 @@ app.use("/card-templates", cardTemplatesRouter);
 app.use("/card-logs", cardLogsRouter);
 app.use("/temporary-coordinators", temporaryCoordinator);
 app.use("/advertising-companies", advertisingCompany);
+app.use("/security", securityRoutes);
 
 const frontendDistPath = process.env.FRONTEND_DIST_PATH;
 
