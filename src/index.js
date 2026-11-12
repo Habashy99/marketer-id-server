@@ -11,7 +11,7 @@ import usersRoutes from "./routes/user.js";
 import coordinatorsRoutes from "./routes/coordinator.js";
 import authsRoutes from "./routes/auth.js";
 import authsUserRoutes from "./routes/authUser.js";
-import dashboardRouter from "./routes/dashboard.js";
+import conductRouter from "./routes/conduct.js";
 import exceptionsRouter from "./routes/exception.js";
 import printLogRouter from "./routes/printLog.js";
 import cardTemplatesRouter from "./routes/cardTemplates.js";
@@ -21,7 +21,7 @@ import temporaryCoordinator from "./routes/temporaryCoordinator.js";
 import advertisingCompany from "./routes/advertisingCompany.js";
 import retailRoutes from "./routes/retail.js";
 import securityRoutes from "./routes/security.js";
-
+import dashboardMarketingCoordinatorsRouter from "./routes/dashboardMarketingCoordinators.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -73,6 +73,10 @@ app.use(express.json());
 app.use(cookieParser());
 
 // API routes
+app.use(
+    "/dashboard-marketing-coordinators",
+    dashboardMarketingCoordinatorsRouter
+);
 app.use("/users", usersRoutes);
 app.use("/printLog", printLogRouter);
 app.use("/coordinators", coordinatorsRoutes);
@@ -80,7 +84,7 @@ app.use("/retail", retailRoutes);
 app.use("/auths", authsRoutes);
 app.use("/exceptions", exceptionsRouter);
 app.use("/authsUser", authsUserRoutes);
-app.use("/dashboard", dashboardRouter);
+app.use("/conduct", conductRouter);
 app.use("/card-templates", cardTemplatesRouter);
 app.use("/card-logs", cardLogsRouter);
 app.use("/temporary-coordinators", temporaryCoordinator);
@@ -106,7 +110,7 @@ if (frontendDistPath) {
             if (
                 req.path.startsWith("/users/") ||
                 req.path.startsWith("/coordinators/") ||
-                req.path.startsWith("/dashboard/") ||
+                req.path.startsWith("/conduct/") ||
                 req.path.startsWith("/auths/") ||
                 req.path.startsWith("/authsUser/") ||
                 req.path.startsWith("/exceptions/") ||

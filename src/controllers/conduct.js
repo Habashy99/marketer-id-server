@@ -1,7 +1,7 @@
 
 import { retailPoolPromise } from "../config/db.js";
 
-const DashboardController = {
+const conductController = {
     getStats: async (req, res) => {
         try {
             const pool = await retailPoolPromise;
@@ -93,14 +93,14 @@ const DashboardController = {
             `);
 
             return res.status(200).json({
-                message: "Dashboard statistics retrieved successfully",
+                message: "conduct statistics retrieved successfully",
                 stats: result.recordset[0],
             });
         } catch (error) {
-            console.error("Dashboard statistics error:", error);
+            console.error("conduct statistics error:", error);
 
             return res.status(500).json({
-                message: "Failed to retrieve dashboard statistics",
+                message: "Failed to retrieve conduct statistics",
             });
         }
     },
@@ -149,7 +149,7 @@ const DashboardController = {
 
             if (!category || !filters[category]) {
                 return res.status(400).json({
-                    message: "Invalid dashboard category",
+                    message: "Invalid conduct category",
                 });
             }
 
@@ -183,13 +183,13 @@ const DashboardController = {
                 records: result.recordset,
             });
         } catch (error) {
-            console.error("Dashboard records error:", error);
+            console.error("conduct records error:", error);
 
             return res.status(500).json({
-                message: "Failed to retrieve dashboard records",
+                message: "Failed to retrieve conduct records",
             });
         }
     },
 };
 
-export default DashboardController;
+export default conductController;

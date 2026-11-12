@@ -1,14 +1,14 @@
 
 import express from "express";
-import DashboardController from "../controllers/dashboard.js";
+import conductController from "../controllers/conduct.js";
 import authMiddleware from "../middlewares/auth.js";
 
 const router = express.Router();
 
-router.get("/stats", authMiddleware, DashboardController.getStats);
+router.get("/stats", authMiddleware, conductController.getStats);
 router.post(
     "/records",
     authMiddleware,
-    DashboardController.getRecordsByCategory
+    conductController.getRecordsByCategory
 );
 export default router;
