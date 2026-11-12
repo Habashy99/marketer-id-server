@@ -1,4 +1,3 @@
-
 import { sql, retailPoolPromise } from "../config/db.js";
 
 /* -------------------------------------------------------------------------- */
@@ -630,7 +629,8 @@ export async function getSecurityCoordinators(req, res) {
       coordinators,
       total: coordinators.length,
       imported: coordinators.filter((item) => item.already_imported).length,
-      not_imported: coordinators.filter((item) => !item.already_imported).length,
+      not_imported: coordinators.filter((item) => !item.already_imported)
+        .length,
       deleted_records: 0,
     });
   } catch (error) {
@@ -778,9 +778,11 @@ export async function importSecurityCoordinators(req, res) {
     for (const coordinator of uniqueCoordinators) {
       const nationalId = clean(coordinator.national_id_number);
 
-      const existing = await new sql.Request(transaction)
-        .input("nationalId", sql.NVarChar(50), nationalId)
-        .query(`
+      const existing = await new sql.Request(transaction).input(
+        "nationalId",
+        sql.NVarChar(50),
+        nationalId,
+      ).query(`
           SELECT TOP 1
             id,
             is_deleted
@@ -826,8 +828,7 @@ export async function importSecurityCoordinators(req, res) {
         .input("branch", sql.NVarChar(255), coordinator.branch)
         .input("governorate", sql.NVarChar(100), coordinator.governorate)
         .input("securityStatus", sql.NVarChar(50), sourceStatus)
-        .input("notes", sql.NVarChar(sql.MAX), coordinator.notes)
-        .query(`
+        .input("notes", sql.NVarChar(sql.MAX), coordinator.notes).query(`
           INSERT INTO dbo.security_persons (
             name,
             national_id_number,
@@ -909,9 +910,11 @@ export async function importSecurityCoordinators(req, res) {
         continue;
       }
 
-      const personResult = await new sql.Request(transaction)
-        .input("nationalId", sql.NVarChar(50), nationalId)
-        .query(`
+      const personResult = await new sql.Request(transaction).input(
+        "nationalId",
+        sql.NVarChar(50),
+        nationalId,
+      ).query(`
           SELECT TOP 1
             id,
             security_situation,
@@ -939,8 +942,7 @@ export async function importSecurityCoordinators(req, res) {
       await new sql.Request(transaction)
         .input("personId", sql.Int, person.id)
         .input("status", sql.NVarChar(50), status)
-        .input("notes", sql.NVarChar(sql.MAX), updatedNotes)
-        .query(`
+        .input("notes", sql.NVarChar(sql.MAX), updatedNotes).query(`
           UPDATE dbo.security_persons
           SET
             security_situation = @status,
@@ -1048,9 +1050,11 @@ export async function updateCoordinatorSecurity(req, res) {
 
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    const existing = await new sql.Request(transaction)
-      .input("nationalId", sql.NVarChar(50), nationalId)
-      .query(`
+    const existing = await new sql.Request(transaction).input(
+      "nationalId",
+      sql.NVarChar(50),
+      nationalId,
+    ).query(`
         SELECT TOP 1
           id,
           security_situation,
@@ -1080,8 +1084,7 @@ export async function updateCoordinatorSecurity(req, res) {
     await new sql.Request(transaction)
       .input("personId", sql.Int, person.id)
       .input("securityStatus", sql.NVarChar(50), finalStatus)
-      .input("notes", sql.NVarChar(sql.MAX), updatedNotes)
-      .query(`
+      .input("notes", sql.NVarChar(sql.MAX), updatedNotes).query(`
         UPDATE dbo.security_persons
         SET
           security_situation = @securityStatus,
@@ -1305,7 +1308,7 @@ export async function getSecurityRecords(req, res) {
 
     const records = result.recordset || [];
     const total = records.length ? Number(records[0].total_count) : 0;
-
+    const totalPages = Math.ceil(total / limit);
     return res.status(200).json({
       success: true,
       records,
@@ -1313,7 +1316,9 @@ export async function getSecurityRecords(req, res) {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit),
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
       },
     });
   } catch (error) {
@@ -1480,9 +1485,11 @@ export async function createSecurityRecord(req, res) {
     const nationalId = clean(req.body.national_id_number);
     const securityStatus = getSecurityStatus(req.body);
 
-    const duplicate = await new sql.Request(transaction)
-      .input("nationalId", sql.NVarChar(50), nationalId)
-      .query(`
+    const duplicate = await new sql.Request(transaction).input(
+      "nationalId",
+      sql.NVarChar(50),
+      nationalId,
+    ).query(`
         SELECT TOP 1
           id,
           is_deleted
@@ -1661,9 +1668,11 @@ export async function updateSecurityRecord(req, res) {
 
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    const existing = await new sql.Request(transaction)
-      .input("nationalId", sql.NVarChar(50), nationalId)
-      .query(`
+    const existing = await new sql.Request(transaction).input(
+      "nationalId",
+      sql.NVarChar(50),
+      nationalId,
+    ).query(`
         SELECT TOP 1
           id,
           name,
@@ -1694,8 +1703,7 @@ export async function updateSecurityRecord(req, res) {
     await new sql.Request(transaction)
       .input("personId", sql.Int, person.id)
       .input("securityStatus", sql.NVarChar(50), securityStatus)
-      .input("notes", sql.NVarChar(sql.MAX), notes)
-      .query(`
+      .input("notes", sql.NVarChar(sql.MAX), notes).query(`
         UPDATE dbo.security_persons
         SET
           security_situation = @securityStatus,
@@ -1789,9 +1797,11 @@ export async function updateSecurityIncident(req, res) {
 
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    const existing = await new sql.Request(transaction)
-      .input("incidentId", sql.Int, incidentId)
-      .query(`
+    const existing = await new sql.Request(transaction).input(
+      "incidentId",
+      sql.Int,
+      incidentId,
+    ).query(`
         SELECT
           i.id,
           i.security_person_id
@@ -1885,9 +1895,11 @@ export async function updateSecurityPermit(req, res) {
 
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    const existing = await new sql.Request(transaction)
-      .input("permitId", sql.Int, permitId)
-      .query(`
+    const existing = await new sql.Request(transaction).input(
+      "permitId",
+      sql.Int,
+      permitId,
+    ).query(`
         SELECT
           pm.id,
           pm.security_person_id
@@ -1972,9 +1984,11 @@ export async function deleteSecurityRecord(req, res) {
 
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    const findResult = await new sql.Request(transaction)
-      .input("nationalId", sql.NVarChar(50), nationalId)
-      .query(`
+    const findResult = await new sql.Request(transaction).input(
+      "nationalId",
+      sql.NVarChar(50),
+      nationalId,
+    ).query(`
         SELECT TOP 1
           id,
           name,
@@ -1997,8 +2011,7 @@ export async function deleteSecurityRecord(req, res) {
 
     const person = findResult.recordset[0];
 
-    await new sql.Request(transaction)
-      .input("personId", sql.Int, person.id)
+    await new sql.Request(transaction).input("personId", sql.Int, person.id)
       .query(`
         UPDATE dbo.security_persons
         SET
@@ -2047,8 +2060,7 @@ export const checkSecurityNationalId = async (req, res) => {
 
     const result = await pool
       .request()
-      .input("nationalId", sql.VarChar(14), nationalId)
-      .query(`
+      .input("nationalId", sql.VarChar(14), nationalId).query(`
         SELECT TOP 1
           national_id_number,
           security_situation,
