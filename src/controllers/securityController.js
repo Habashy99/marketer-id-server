@@ -1702,28 +1702,51 @@ export async function getSecurityByNationalId(req, res) {
 /* POST /security                                                             */
 /* -------------------------------------------------------------------------- */
 
+
 export async function createSecurityRecord(req, res) {
-  const validationError = validateBody(req.body);
-
-  if (validationError) {
-    return res.status(400).json({
-      success: false,
-      message: validationError,
-    });
-  }
-
   let transaction;
 
   try {
+    const job = clean(req.body.job);
+
+    // تحديد نوع الملف تلقائيًا حسب الوظيفة
+    let fileType = clean(req.body.file_type);
+
+    if (job === "عميل") {
+      fileType = "25";
+    } else if (
+      ["مندوب", "مندوبة", "منسق", "منسقة"].includes(job)
+    ) {
+      fileType = "مناديب/منسقين";
+    }
+
+    // تجهيز البيانات بالقيمة الصحيحة
+    const body = {
+      ...req.body,
+      job,
+      file_type: fileType,
+    };
+
+    // التحقق من البيانات بعد تصحيح نوع الملف
+    const validationError = validateBody(body);
+
+    if (validationError) {
+      return res.status(400).json({
+        success: false,
+        message: validationError,
+      });
+    }
+
     const pool = await retailPoolPromise;
 
     transaction = new sql.Transaction(pool);
 
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    const nationalId = clean(req.body.national_id_number);
-    const securityStatus = getSecurityStatus(req.body);
+    const nationalId = clean(body.national_id_number);
+    const securityStatus = getSecurityStatus(body);
 
+    // التأكد من عدم تكرار الرقم القومي
     const duplicate = await new sql.Request(transaction)
       .input("nationalId", sql.NVarChar(50), nationalId)
       .query(`
@@ -1746,9 +1769,10 @@ export async function createSecurityRecord(req, res) {
       });
     }
 
+    // إضافة بيانات الشخص
     const personRequest = new sql.Request(transaction);
 
-    bindPerson(personRequest, req.body);
+    bindPerson(personRequest, body);
 
     const personResult = await personRequest.query(`
       INSERT INTO dbo.security_persons (
@@ -1792,10 +1816,11 @@ export async function createSecurityRecord(req, res) {
 
     const personId = personResult.recordset[0].id;
 
-    if (hasIncidentData(req.body)) {
+    // إضافة الواقعة إن وجدت
+    if (hasIncidentData(body)) {
       const incidentRequest = new sql.Request(transaction);
 
-      bindIncident(incidentRequest, req.body);
+      bindIncident(incidentRequest, body);
       incidentRequest.input("personId", sql.Int, personId);
 
       await incidentRequest.query(`
@@ -1818,10 +1843,11 @@ export async function createSecurityRecord(req, res) {
       `);
     }
 
-    if (hasPermitData(req.body)) {
+    // إضافة التصريح إن وجد
+    if (hasPermitData(body)) {
       const permitRequest = new sql.Request(transaction);
 
-      bindPermit(permitRequest, req.body);
+      bindPermit(permitRequest, body);
       permitRequest.input("personId", sql.Int, personId);
 
       await permitRequest.query(`
@@ -1844,12 +1870,14 @@ export async function createSecurityRecord(req, res) {
       `);
     }
 
-    const synchronization = await updateCoordinatorStatusInTransaction(
-      transaction,
-      nationalId,
-      securityStatus,
-      req.body.notes,
-    );
+    // مزامنة الموقف الأمني مع جدول المنسقين
+    const synchronization =
+      await updateCoordinatorStatusInTransaction(
+        transaction,
+        nationalId,
+        securityStatus,
+        body.notes,
+      );
 
     await transaction.commit();
     transaction = null;
@@ -1859,7 +1887,7 @@ export async function createSecurityRecord(req, res) {
       message: "تمت إضافة السجل بنجاح.",
       id: personId,
       security_status: securityStatus,
-      file_type: clean(req.body.job) === "عميل" ? "25" : clean(req.body.file_type),
+      file_type: fileType,
       synchronization,
     });
   } catch (error) {
@@ -1872,9 +1900,12 @@ export async function createSecurityRecord(req, res) {
       });
     }
 
+    console.error("createSecurityRecord error:", error);
+
     return sendServerError(res, error, "إضافة السجل");
   }
 }
+
 
 /* -------------------------------------------------------------------------- */
 /* PUT /security/national-id/:nationalId                                      */
