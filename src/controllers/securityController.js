@@ -1,3 +1,4 @@
+
 import { sql, retailPoolPromise } from "../config/db.js";
 
 /* -------------------------------------------------------------------------- */
@@ -7,8 +8,8 @@ import { sql, retailPoolPromise } from "../config/db.js";
 const VALID_STATUSES = ["سليم", "تحت المراجعة", "مرفوض", "غير محدد", "بلوك"];
 const VALID_JOBS = ["عميل", "مندوب", "مندوبة", "منسق", "منسقة"];
 
-const DEFAULT_PAGE_SIZE = 25;
-const MAX_PAGE_SIZE = 100;
+const DEFAULT_PAGE_SIZE = 30;
+const MAX_PAGE_SIZE = 30;
 
 /* -------------------------------------------------------------------------- */
 /* General Helpers                                                            */
@@ -127,10 +128,12 @@ function normalizeCoordinator(row) {
     governorate: clean(row.governorate),
     notes: clean(row.notes),
     security_situation: clean(row.security_situation) || "غير محدد",
+
     advertising_company_id:
       row.advertising_company_id == null
         ? null
         : Number(row.advertising_company_id),
+
     branch: clean(row.branch),
   };
 }
@@ -150,6 +153,7 @@ function validateBody(body) {
   const status = getSecurityStatus(body);
 
   const amount = clean(body.value_of_stolen_goods);
+  const birthDate = clean(body.birth_date);
   const incidentDate = clean(body.incident_date);
   const permitDate = clean(body.permit_issue_date);
 
@@ -165,6 +169,10 @@ function validateBody(body) {
 
   if (!VALID_STATUSES.includes(status)) {
     return "الموقف الأمني غير صحيح.";
+  }
+
+  if (birthDate && !parseDate(birthDate)) {
+    return "تاريخ الميلاد غير صحيح. استخدم YYYY-MM-DD.";
   }
 
   if (
@@ -210,9 +218,28 @@ function validatePersonBody(body, nationalId) {
 /* -------------------------------------------------------------------------- */
 
 function bindPerson(request, body) {
+  const job = clean(body.job);
+
+  // العميل يكون نوع ملفه 25 دائمًا، سواء عند الإضافة أو التعديل.
+  const fileType = job === "عميل" ? "25" : clean(body.file_type);
+
   request.input("name", sql.NVarChar(255), clean(body.name));
-  request.input("nationalId", sql.NVarChar(50), clean(body.national_id_number));
-  request.input("job", sql.NVarChar(100), clean(body.job));
+
+  request.input(
+    "nationalId",
+    sql.NVarChar(50),
+    clean(body.national_id_number),
+  );
+
+  request.input("birthDate", sql.Date, parseDate(body.birth_date));
+
+  request.input(
+    "birthPlace",
+    sql.NVarChar(255),
+    clean(body.birth_place),
+  );
+
+  request.input("job", sql.NVarChar(100), job);
   request.input("companyId", sql.NVarChar(100), clean(body.company_name));
 
   request.input(
@@ -238,7 +265,9 @@ function bindPerson(request, body) {
   request.input("branch", sql.NVarChar(255), clean(body.branch));
   request.input("branchName", sql.NVarChar(255), clean(body.branch_name));
   request.input("governorate", sql.NVarChar(100), clean(body.governorate));
-  request.input("fileType", sql.NVarChar(100), clean(body.file_type));
+
+  request.input("fileType", sql.NVarChar(100), fileType);
+
   request.input("securityStatus", sql.NVarChar(50), getSecurityStatus(body));
   request.input("notes", sql.NVarChar(sql.MAX), clean(body.notes));
 }
@@ -246,7 +275,11 @@ function bindPerson(request, body) {
 function bindIncident(request, body) {
   const amount = clean(body.value_of_stolen_goods);
 
-  request.input("stolenGoods", sql.NVarChar(sql.MAX), clean(body.stolen_goods));
+  request.input(
+    "stolenGoods",
+    sql.NVarChar(sql.MAX),
+    clean(body.stolen_goods),
+  );
 
   request.input(
     "stolenGoodsValue",
@@ -296,20 +329,20 @@ function bindPermit(request, body) {
 function hasIncidentData(body) {
   return Boolean(
     clean(body.stolen_goods) ||
-    clean(body.value_of_stolen_goods) ||
-    clean(body.incident_date) ||
-    clean(body.incident_notes) ||
-    clean(body.incident_branch),
+      clean(body.value_of_stolen_goods) ||
+      clean(body.incident_date) ||
+      clean(body.incident_notes) ||
+      clean(body.incident_branch),
   );
 }
 
 function hasPermitData(body) {
   return Boolean(
     clean(body.permit_number) ||
-    clean(body.permit_company_name) ||
-    clean(body.permit_issue_date) ||
-    clean(body.permit_branch) ||
-    clean(body.permit_notes),
+      clean(body.permit_company_name) ||
+      clean(body.permit_issue_date) ||
+      clean(body.permit_branch) ||
+      clean(body.permit_notes),
   );
 }
 
@@ -364,15 +397,6 @@ async function saveStatusHistory(
 /* Coordinator Synchronization                                                */
 /* -------------------------------------------------------------------------- */
 
-/**
- * يجب استدعاء هذه الدالة داخل Transaction من نفس قاعدة البيانات.
- *
- * تحدث:
- * 1. dbo.coordinator
- * 2. dbo.temporary_coordinator (السجلات النشطة فقط)
- *
- * لا يتم تنفيذ COMMIT هنا؛ المسؤولية على الدالة المستدعية.
- */
 async function updateCoordinatorStatusInTransaction(
   transaction,
   nationalId,
@@ -391,7 +415,6 @@ async function updateCoordinatorStatusInTransaction(
 
   const normalizedNote = clean(note);
 
-  // Permanent coordinators.
   const permanentRequest = new sql.Request(transaction);
 
   permanentRequest.input("nationalId", sql.VarChar(50), normalizedNationalId);
@@ -411,7 +434,6 @@ async function updateCoordinatorStatusInTransaction(
     WHERE LTRIM(RTRIM(national_id_number)) = @nationalId;
   `);
 
-  // Active temporary coordinators only.
   const temporaryRequest = new sql.Request(transaction);
 
   temporaryRequest.input("nationalId", sql.NVarChar(50), normalizedNationalId);
@@ -450,7 +472,6 @@ export async function getSecurityCoordinators(req, res) {
     const pool = await retailPoolPromise;
 
     const result = await pool.request().query(`
-      /* المناديب والمنسقون الأساسيون */
       SELECT
         c.id,
         c.code,
@@ -518,7 +539,6 @@ export async function getSecurityCoordinators(req, res) {
 
       UNION ALL
 
-      /* المنسقون المؤقتون */
       SELECT
         tc.id,
         CAST(NULL AS NVARCHAR(100)) AS code,
@@ -584,7 +604,6 @@ export async function getSecurityCoordinators(req, res) {
 
     const rows = result.recordset || [];
 
-    // الأساسي له الأولوية على المؤقت عند تكرار الرقم القومي.
     rows.sort((a, b) => {
       if (a.source_type !== b.source_type) {
         return a.source_type === "permanent" ? -1 : 1;
@@ -629,8 +648,7 @@ export async function getSecurityCoordinators(req, res) {
       coordinators,
       total: coordinators.length,
       imported: coordinators.filter((item) => item.already_imported).length,
-      not_imported: coordinators.filter((item) => !item.already_imported)
-        .length,
+      not_imported: coordinators.filter((item) => !item.already_imported).length,
       deleted_records: 0,
     });
   } catch (error) {
@@ -657,7 +675,6 @@ export async function importSecurityCoordinators(req, res) {
     const reviews = Array.isArray(req.body?.reviews) ? req.body.reviews : [];
 
     const coordinatorResult = await pool.request().query(`
-      /* المناديب والمنسقون الأساسيون */
       SELECT
         id,
         code,
@@ -687,7 +704,6 @@ export async function importSecurityCoordinators(req, res) {
 
       UNION ALL
 
-      /* المنسقون المؤقتون */
       SELECT
         id,
         CAST(NULL AS NVARCHAR(100)) AS code,
@@ -716,10 +732,8 @@ export async function importSecurityCoordinators(req, res) {
     let coordinators = (coordinatorResult.recordset || [])
       .map((row) => ({
         ...normalizeCoordinator(row),
-
         source_type: row.source_type,
         source_label: getSourceLabel(row.source_type),
-
         source_priority: Number(row.source_priority),
       }))
       .filter(
@@ -729,7 +743,6 @@ export async function importSecurityCoordinators(req, res) {
           VALID_JOBS.includes(item.job),
       );
 
-    // إذا أُرسلت أرقام قومية محددة، نستورد المحدد فقط.
     if (hasNationalIds) {
       const selectedIds = new Set(requestedIds);
 
@@ -738,7 +751,6 @@ export async function importSecurityCoordinators(req, res) {
       );
     }
 
-    // إزالة التكرار مع إعطاء الأولوية للسجلات الأساسية.
     coordinators.sort((a, b) => {
       if (a.source_priority !== b.source_priority) {
         return a.source_priority - b.source_priority;
@@ -771,18 +783,12 @@ export async function importSecurityCoordinators(req, res) {
     const reviewResults = [];
     const importResults = [];
 
-    /* ------------------------------------------------------------------ */
-    /* Import selected coordinators                                       */
-    /* ------------------------------------------------------------------ */
-
     for (const coordinator of uniqueCoordinators) {
       const nationalId = clean(coordinator.national_id_number);
 
-      const existing = await new sql.Request(transaction).input(
-        "nationalId",
-        sql.NVarChar(50),
-        nationalId,
-      ).query(`
+      const existing = await new sql.Request(transaction)
+        .input("nationalId", sql.NVarChar(50), nationalId)
+        .query(`
           SELECT TOP 1
             id,
             is_deleted
@@ -828,7 +834,8 @@ export async function importSecurityCoordinators(req, res) {
         .input("branch", sql.NVarChar(255), coordinator.branch)
         .input("governorate", sql.NVarChar(100), coordinator.governorate)
         .input("securityStatus", sql.NVarChar(50), sourceStatus)
-        .input("notes", sql.NVarChar(sql.MAX), coordinator.notes).query(`
+        .input("notes", sql.NVarChar(sql.MAX), coordinator.notes)
+        .query(`
           INSERT INTO dbo.security_persons (
             name,
             national_id_number,
@@ -860,7 +867,6 @@ export async function importSecurityCoordinators(req, res) {
 
       const personId = insertResult.recordset[0].id;
 
-      // مزامنة الحالة مع الجدولين الأساسي والمؤقت.
       const synchronization = await updateCoordinatorStatusInTransaction(
         transaction,
         nationalId,
@@ -880,10 +886,6 @@ export async function importSecurityCoordinators(req, res) {
         synchronization,
       });
     }
-
-    /* ------------------------------------------------------------------ */
-    /* Apply review changes                                               */
-    /* ------------------------------------------------------------------ */
 
     for (const review of reviews) {
       const nationalId = clean(review?.national_id_number);
@@ -910,11 +912,9 @@ export async function importSecurityCoordinators(req, res) {
         continue;
       }
 
-      const personResult = await new sql.Request(transaction).input(
-        "nationalId",
-        sql.NVarChar(50),
-        nationalId,
-      ).query(`
+      const personResult = await new sql.Request(transaction)
+        .input("nationalId", sql.NVarChar(50), nationalId)
+        .query(`
           SELECT TOP 1
             id,
             security_situation,
@@ -942,7 +942,8 @@ export async function importSecurityCoordinators(req, res) {
       await new sql.Request(transaction)
         .input("personId", sql.Int, person.id)
         .input("status", sql.NVarChar(50), status)
-        .input("notes", sql.NVarChar(sql.MAX), updatedNotes).query(`
+        .input("notes", sql.NVarChar(sql.MAX), updatedNotes)
+        .query(`
           UPDATE dbo.security_persons
           SET
             security_situation = @status,
@@ -1050,11 +1051,9 @@ export async function updateCoordinatorSecurity(req, res) {
 
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    const existing = await new sql.Request(transaction).input(
-      "nationalId",
-      sql.NVarChar(50),
-      nationalId,
-    ).query(`
+    const existing = await new sql.Request(transaction)
+      .input("nationalId", sql.NVarChar(50), nationalId)
+      .query(`
         SELECT TOP 1
           id,
           security_situation,
@@ -1084,7 +1083,8 @@ export async function updateCoordinatorSecurity(req, res) {
     await new sql.Request(transaction)
       .input("personId", sql.Int, person.id)
       .input("securityStatus", sql.NVarChar(50), finalStatus)
-      .input("notes", sql.NVarChar(sql.MAX), updatedNotes).query(`
+      .input("notes", sql.NVarChar(sql.MAX), updatedNotes)
+      .query(`
         UPDATE dbo.security_persons
         SET
           security_situation = @securityStatus,
@@ -1102,7 +1102,6 @@ export async function updateCoordinatorSecurity(req, res) {
       req.user?.id,
     );
 
-    // Synchronize both coordinator tables BEFORE COMMIT.
     const synchronization = await updateCoordinatorStatusInTransaction(
       transaction,
       nationalId,
@@ -1131,6 +1130,7 @@ export async function updateCoordinatorSecurity(req, res) {
 
 /* -------------------------------------------------------------------------- */
 /* GET /security                                                              */
+/* كل شخص يظهر مرة واحدة مع تجميع جميع الوقائع والتصاريح                      */
 /* -------------------------------------------------------------------------- */
 
 export async function getSecurityRecords(req, res) {
@@ -1144,6 +1144,13 @@ export async function getSecurityRecords(req, res) {
 
     const offset = (page - 1) * limit;
 
+    if (!Number.isSafeInteger(offset) || offset > 2147483647) {
+      return res.status(400).json({
+        success: false,
+        message: "رقم الصفحة كبير جدًا.",
+      });
+    }
+
     const search = clean(req.query.search);
     const job = clean(req.query.job);
     const status = clean(req.query.status);
@@ -1152,7 +1159,12 @@ export async function getSecurityRecords(req, res) {
     const pool = await retailPoolPromise;
     const request = pool.request();
 
-    request.input("search", sql.NVarChar(255), search ? `%${search}%` : null);
+    request.input(
+      "search",
+      sql.NVarChar(255),
+      search ? `%${search}%` : null,
+    );
+
     request.input("job", sql.NVarChar(100), job);
     request.input("status", sql.NVarChar(50), status);
     request.input("fileType", sql.NVarChar(100), fileType);
@@ -1160,155 +1172,372 @@ export async function getSecurityRecords(req, res) {
     request.input("limit", sql.Int, limit);
 
     const result = await request.query(`
-      WITH SecurityRecords AS (
-        SELECT
-          i.id,
-          p.id AS person_id,
-          p.name,
-          p.national_id_number,
-          p.job,
-          p.branch AS person_branch,
-          p.security_situation,
-          N'incident' AS record_type,
-          N'واقعة' AS record_type_name,
-          N'25' AS file_type,
-          i.branch AS incident_branch,
-          i.stolen_goods,
-          i.stolen_goods_value,
-          i.incident_date AS record_date,
-          i.notes,
-          p.company_display_name,
-          p.advertising_company_name,
-          CAST(NULL AS NVARCHAR(255)) AS permit_number,
-          CAST(NULL AS NVARCHAR(255)) AS permit_company_name,
-          CAST(NULL AS NVARCHAR(255)) AS permit_branch
-        FROM dbo.security_incidents i
-        INNER JOIN dbo.security_persons p
-          ON p.id = i.security_person_id
-        WHERE ISNULL(p.is_deleted, 0) = 0
-
-        UNION ALL
-
-        SELECT
-          pr.id,
-          p.id AS person_id,
-          p.name,
-          p.national_id_number,
-          p.job,
-          p.branch AS person_branch,
-          p.security_situation,
-          N'permit' AS record_type,
-          N'تصريح' AS record_type_name,
-          N'مناديب/ منسقين' AS file_type,
-          pr.branch AS incident_branch,
-          CAST(NULL AS NVARCHAR(MAX)) AS stolen_goods,
-          CAST(NULL AS DECIMAL(18, 2)) AS stolen_goods_value,
-          pr.issue_date AS record_date,
-          pr.notes,
-          p.company_display_name,
-          p.advertising_company_name,
-          pr.permit_number,
-          pr.company_name AS permit_company_name,
-          pr.branch AS permit_branch
-        FROM dbo.security_permits pr
-        INNER JOIN dbo.security_persons p
-          ON p.id = pr.security_person_id
-        WHERE ISNULL(p.is_deleted, 0) = 0
-
-        UNION ALL
-
+      ;WITH PersonRecords AS (
         SELECT
           p.id,
           p.id AS person_id,
+          p.id AS serial_number,
+
           p.name,
           p.national_id_number,
+          p.birth_date,
+          p.birth_place,
           p.job,
-          p.branch AS person_branch,
-          p.security_situation,
-          N'person' AS record_type,
-          N'شخص' AS record_type_name,
-          COALESCE(p.file_type, N'غير محدد') AS file_type,
-          CAST(NULL AS NVARCHAR(255)) AS incident_branch,
-          CAST(NULL AS NVARCHAR(MAX)) AS stolen_goods,
-          CAST(NULL AS DECIMAL(18, 2)) AS stolen_goods_value,
-          CAST(NULL AS DATE) AS record_date,
-          p.notes,
+
+          p.company_id,
           p.company_display_name,
+
+          p.advertising_company_id,
           p.advertising_company_name,
-          CAST(NULL AS NVARCHAR(255)) AS permit_number,
-          CAST(NULL AS NVARCHAR(255)) AS permit_company_name,
-          CAST(NULL AS NVARCHAR(255)) AS permit_branch
+
+          p.governorate,
+          p.branch AS person_branch,
+          p.branch_name,
+
+          COALESCE(
+            NULLIF(LTRIM(RTRIM(p.security_situation)), N''),
+            N'غير محدد'
+          ) AS security_situation,
+
+          ISNULL(inc.incident_count, 0) AS total_incidents,
+          ISNULL(per.permit_count, 0) AS total_permits,
+
+          /* العميل نوع ملفه 25 دائمًا، حتى بدون وجود واقعة. */
+          CASE
+            WHEN LTRIM(RTRIM(ISNULL(p.job, N''))) = N'عميل'
+              THEN N'25'
+
+            WHEN ISNULL(inc.incident_count, 0) > 0
+             AND ISNULL(per.permit_count, 0) > 0
+              THEN N'25، مناديب/ منسقين'
+
+            WHEN ISNULL(inc.incident_count, 0) > 0
+              THEN N'25'
+
+            WHEN ISNULL(per.permit_count, 0) > 0
+              THEN N'مناديب/ منسقين'
+
+            ELSE COALESCE(
+              NULLIF(LTRIM(RTRIM(p.file_type)), N''),
+              N'غير محدد'
+            )
+          END AS file_type,
+
+          CASE
+            WHEN LTRIM(RTRIM(ISNULL(p.job, N''))) = N'عميل'
+              THEN N'عميل'
+
+            WHEN ISNULL(inc.incident_count, 0) > 0
+             AND ISNULL(per.permit_count, 0) > 0
+              THEN N'واقعة وتصريح'
+
+            WHEN ISNULL(inc.incident_count, 0) > 0
+              THEN N'واقعة'
+
+            WHEN ISNULL(per.permit_count, 0) > 0
+              THEN N'تصريح'
+
+            ELSE N'شخص'
+          END AS record_type_name,
+
+          N'person' AS record_type,
+
+          inc.incidents_json,
+          per.permits_json,
+
+          inc.incident_ids,
+          inc.incident_branch,
+          inc.stolen_goods,
+          inc.stolen_goods_value,
+          inc.incident_dates,
+          inc.incident_notes,
+
+          per.permit_ids,
+          per.permit_number,
+          per.permit_company_name,
+          per.permit_issue_dates,
+          per.permit_branch,
+          per.permit_notes,
+
+          CONCAT_WS(
+            NCHAR(13) + NCHAR(10),
+            NULLIF(LTRIM(RTRIM(p.notes)), N''),
+            NULLIF(inc.incident_notes, N''),
+            NULLIF(per.permit_notes, N'')
+          ) AS notes,
+
+          CASE
+            WHEN inc.latest_incident_date IS NULL
+              THEN per.latest_permit_date
+
+            WHEN per.latest_permit_date IS NULL
+              THEN inc.latest_incident_date
+
+            WHEN inc.latest_incident_date >= per.latest_permit_date
+              THEN inc.latest_incident_date
+
+            ELSE per.latest_permit_date
+          END AS record_date
+
         FROM dbo.security_persons p
-        WHERE
-          ISNULL(p.is_deleted, 0) = 0
-          AND NOT EXISTS (
-            SELECT 1
-            FROM dbo.security_incidents i
-            WHERE i.security_person_id = p.id
-          )
-          AND NOT EXISTS (
-            SELECT 1
-            FROM dbo.security_permits pr
-            WHERE pr.security_person_id = p.id
-          )
+
+        OUTER APPLY (
+          SELECT
+            COUNT(*) AS incident_count,
+
+            MAX(i.incident_date) AS latest_incident_date,
+
+            (
+              SELECT
+                i2.id,
+                i2.security_person_id,
+                i2.branch,
+                i2.stolen_goods,
+                i2.stolen_goods_value,
+                i2.incident_date,
+                i2.notes,
+                N'25' AS file_type,
+                N'incident' AS record_type
+              FROM dbo.security_incidents i2
+              WHERE i2.security_person_id = p.id
+              ORDER BY
+                i2.incident_date DESC,
+                i2.id DESC
+              FOR JSON PATH
+            ) AS incidents_json,
+
+            STRING_AGG(
+              CAST(i.id AS NVARCHAR(MAX)),
+              N'، '
+            ) AS incident_ids,
+
+            STRING_AGG(
+              CAST(i.branch AS NVARCHAR(MAX)),
+              NCHAR(13) + NCHAR(10)
+            ) AS incident_branch,
+
+            STRING_AGG(
+              CAST(i.stolen_goods AS NVARCHAR(MAX)),
+              NCHAR(13) + NCHAR(10)
+            ) AS stolen_goods,
+
+            STRING_AGG(
+              CAST(i.stolen_goods_value AS NVARCHAR(MAX)),
+              NCHAR(13) + NCHAR(10)
+            ) AS stolen_goods_value,
+
+            STRING_AGG(
+              CONVERT(NVARCHAR(10), i.incident_date, 23),
+              NCHAR(13) + NCHAR(10)
+            ) AS incident_dates,
+
+            STRING_AGG(
+              CAST(
+                NULLIF(LTRIM(RTRIM(i.notes)), N'')
+                AS NVARCHAR(MAX)
+              ),
+              NCHAR(13) + NCHAR(10)
+            ) AS incident_notes
+
+          FROM dbo.security_incidents i
+          WHERE i.security_person_id = p.id
+        ) inc
+
+        OUTER APPLY (
+          SELECT
+            COUNT(*) AS permit_count,
+
+            MAX(pm.issue_date) AS latest_permit_date,
+
+            (
+              SELECT
+                pm2.id,
+                pm2.security_person_id,
+                pm2.permit_number,
+                pm2.company_name,
+                pm2.issue_date,
+                pm2.branch,
+                pm2.notes,
+                N'مناديب/ منسقين' AS file_type,
+                N'permit' AS record_type
+              FROM dbo.security_permits pm2
+              WHERE pm2.security_person_id = p.id
+              ORDER BY
+                pm2.issue_date DESC,
+                pm2.id DESC
+              FOR JSON PATH
+            ) AS permits_json,
+
+            STRING_AGG(
+              CAST(pm.permit_number AS NVARCHAR(MAX)),
+              NCHAR(13) + NCHAR(10)
+            ) AS permit_number,
+
+            STRING_AGG(
+              CAST(pm.id AS NVARCHAR(MAX)),
+              N'، '
+            ) AS permit_ids,
+
+            STRING_AGG(
+              CAST(pm.company_name AS NVARCHAR(MAX)),
+              NCHAR(13) + NCHAR(10)
+            ) AS permit_company_name,
+
+            STRING_AGG(
+              CONVERT(NVARCHAR(10), pm.issue_date, 23),
+              NCHAR(13) + NCHAR(10)
+            ) AS permit_issue_dates,
+
+            STRING_AGG(
+              CAST(pm.branch AS NVARCHAR(MAX)),
+              NCHAR(13) + NCHAR(10)
+            ) AS permit_branch,
+
+            STRING_AGG(
+              CAST(
+                NULLIF(LTRIM(RTRIM(pm.notes)), N'')
+                AS NVARCHAR(MAX)
+              ),
+              NCHAR(13) + NCHAR(10)
+            ) AS permit_notes
+
+          FROM dbo.security_permits pm
+          WHERE pm.security_person_id = p.id
+        ) per
+
+        WHERE ISNULL(p.is_deleted, 0) = 0
       ),
+
       FilteredRecords AS (
         SELECT *
-        FROM SecurityRecords r
+        FROM PersonRecords r
+
         WHERE
           (
             @job IS NULL
             OR LTRIM(RTRIM(ISNULL(r.job, N''))) =
                LTRIM(RTRIM(@job))
           )
+
           AND (
             @status IS NULL
-            OR LTRIM(RTRIM(
-              ISNULL(r.security_situation, N'غير محدد')
-            )) = LTRIM(RTRIM(@status))
+            OR LTRIM(RTRIM(ISNULL(r.security_situation, N'غير محدد'))) =
+               LTRIM(RTRIM(@status))
           )
+
+          /* فلتر نوع الملف 25 يشمل العملاء والوقائع. */
           AND (
             @fileType IS NULL
-            OR REPLACE(
-              LTRIM(RTRIM(ISNULL(r.file_type, N''))),
-              N' ',
-              N''
-            ) =
-            REPLACE(
-              LTRIM(RTRIM(@fileType)),
-              N' ',
-              N''
+
+            OR (
+              REPLACE(LTRIM(RTRIM(@fileType)), N' ', N'') = N'25'
+              AND (
+                LTRIM(RTRIM(ISNULL(r.job, N''))) = N'عميل'
+                OR r.total_incidents > 0
+              )
+            )
+
+            OR (
+              REPLACE(LTRIM(RTRIM(@fileType)), N' ', N'')
+                = N'مناديب/منسقين'
+              AND r.total_permits > 0
+            )
+
+            OR (
+              REPLACE(LTRIM(RTRIM(@fileType)), N' ', N'')
+                = REPLACE(
+                    LTRIM(RTRIM(ISNULL(r.file_type, N''))),
+                    N' ',
+                    N''
+                  )
             )
           )
+
           AND (
             @search IS NULL
+
             OR ISNULL(r.name, N'') LIKE @search
             OR ISNULL(r.national_id_number, N'') LIKE @search
+            OR ISNULL(r.governorate, N'') LIKE @search
+
             OR CONVERT(NVARCHAR(20), r.person_id) LIKE @search
-            OR CONVERT(NVARCHAR(20), r.id) LIKE @search
+
             OR ISNULL(r.notes, N'') LIKE @search
             OR ISNULL(r.person_branch, N'') LIKE @search
-            OR ISNULL(r.incident_branch, N'') LIKE @search
+            OR ISNULL(r.branch_name, N'') LIKE @search
+
             OR ISNULL(r.company_display_name, N'') LIKE @search
             OR ISNULL(r.advertising_company_name, N'') LIKE @search
-            OR ISNULL(r.permit_company_name, N'') LIKE @search
-            OR ISNULL(r.permit_number, N'') LIKE @search
+
+            OR ISNULL(r.incident_branch, N'') LIKE @search
             OR ISNULL(r.stolen_goods, N'') LIKE @search
+            OR ISNULL(r.stolen_goods_value, N'') LIKE @search
+            OR ISNULL(r.incident_dates, N'') LIKE @search
+            OR ISNULL(r.incident_ids, N'') LIKE @search
+
+            OR ISNULL(r.permit_number, N'') LIKE @search
+            OR ISNULL(r.permit_company_name, N'') LIKE @search
+            OR ISNULL(r.permit_branch, N'') LIKE @search
+            OR ISNULL(r.permit_issue_dates, N'') LIKE @search
+            OR ISNULL(r.permit_ids, N'') LIKE @search
+
             OR ISNULL(r.file_type, N'') LIKE @search
           )
       )
+
       SELECT
         *,
         COUNT(*) OVER() AS total_count
       FROM FilteredRecords
-      ORDER BY record_date DESC, id DESC
+      ORDER BY
+        record_date DESC,
+        person_id DESC
       OFFSET @offset ROWS
       FETCH NEXT @limit ROWS ONLY;
     `);
 
-    const records = result.recordset || [];
-    const total = records.length ? Number(records[0].total_count) : 0;
+    const records = (result.recordset || []).map((item) => {
+      let incidents = [];
+      let permits = [];
+
+      try {
+        incidents = item.incidents_json
+          ? JSON.parse(item.incidents_json)
+          : [];
+      } catch {
+        incidents = [];
+      }
+
+      try {
+        permits = item.permits_json
+          ? JSON.parse(item.permits_json)
+          : [];
+      } catch {
+        permits = [];
+      }
+
+      const {
+        incidents_json,
+        permits_json,
+        total_count,
+        ...person
+      } = item;
+
+      return {
+        ...person,
+        incidents,
+        permits,
+        total_incidents: incidents.length,
+        total_permits: permits.length,
+      };
+    });
+
+    const total = result.recordset?.length
+      ? Number(result.recordset[0].total_count)
+      : 0;
+
     const totalPages = Math.ceil(total / limit);
+
     return res.status(200).json({
       success: true,
       records,
@@ -1349,6 +1578,11 @@ export async function getSecurityByNationalId(req, res) {
     const result = await request.query(`
       SELECT
         p.*,
+        CASE
+          WHEN LTRIM(RTRIM(ISNULL(p.job, N''))) = N'عميل'
+            THEN N'25'
+          ELSE p.file_type
+        END AS customer_file_type,
         CASE
           WHEN ISNULL(p.notes, N'') LIKE N'%ممنوع%'
             THEN N'بلوك'
@@ -1446,6 +1680,11 @@ export async function getSecurityByNationalId(req, res) {
       });
     }
 
+    // إرجاع file_type = 25 للعميل حتى لو كان السجل قديمًا.
+    if (clean(person.job) === "عميل") {
+      person.file_type = "25";
+    }
+
     return res.json({
       success: true,
       record: {
@@ -1485,11 +1724,9 @@ export async function createSecurityRecord(req, res) {
     const nationalId = clean(req.body.national_id_number);
     const securityStatus = getSecurityStatus(req.body);
 
-    const duplicate = await new sql.Request(transaction).input(
-      "nationalId",
-      sql.NVarChar(50),
-      nationalId,
-    ).query(`
+    const duplicate = await new sql.Request(transaction)
+      .input("nationalId", sql.NVarChar(50), nationalId)
+      .query(`
         SELECT TOP 1
           id,
           is_deleted
@@ -1517,6 +1754,8 @@ export async function createSecurityRecord(req, res) {
       INSERT INTO dbo.security_persons (
         name,
         national_id_number,
+        birth_date,
+        birth_place,
         job,
         company_id,
         company_display_name,
@@ -1534,6 +1773,8 @@ export async function createSecurityRecord(req, res) {
       VALUES (
         @name,
         @nationalId,
+        @birthDate,
+        @birthPlace,
         @job,
         @companyId,
         @companyDisplayName,
@@ -1603,7 +1844,6 @@ export async function createSecurityRecord(req, res) {
       `);
     }
 
-    // Synchronize coordinator tables in the same transaction.
     const synchronization = await updateCoordinatorStatusInTransaction(
       transaction,
       nationalId,
@@ -1619,6 +1859,7 @@ export async function createSecurityRecord(req, res) {
       message: "تمت إضافة السجل بنجاح.",
       id: personId,
       security_status: securityStatus,
+      file_type: clean(req.body.job) === "عميل" ? "25" : clean(req.body.file_type),
       synchronization,
     });
   } catch (error) {
@@ -1639,120 +1880,133 @@ export async function createSecurityRecord(req, res) {
 /* PUT /security/national-id/:nationalId                                      */
 /* -------------------------------------------------------------------------- */
 
-export async function updateSecurityRecord(req, res) {
-  const nationalId = clean(req.params.nationalId);
-
-  if (!validNationalId(nationalId)) {
-    return res.status(400).json({
-      success: false,
-      message: "الرقم القومي غير صحيح.",
-    });
-  }
-
-  const securityStatus = clean(req.body?.security_status);
-  const notes = clean(req.body?.notes);
-
-  if (!VALID_STATUSES.includes(securityStatus)) {
-    return res.status(400).json({
-      success: false,
-      message: "الموقف الأمني غير صحيح.",
-    });
-  }
-
-  let transaction;
+export const updateSecurityRecord = async (req, res) => {
+  const transaction = new sql.Transaction(await retailPoolPromise);
 
   try {
-    const pool = await retailPoolPromise;
+    // الرقم القومي المعتمد هو الموجود في URL فقط
+    const nationalId = clean(req.params.nationalId);
 
-    transaction = new sql.Transaction(pool);
-
-    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-
-    const existing = await new sql.Request(transaction).input(
-      "nationalId",
-      sql.NVarChar(50),
-      nationalId,
-    ).query(`
-        SELECT TOP 1
-          id,
-          name,
-          national_id_number,
-          job,
-          security_situation,
-          notes
-        FROM dbo.security_persons WITH (UPDLOCK, HOLDLOCK)
-        WHERE
-          LTRIM(RTRIM(national_id_number)) = @nationalId
-          AND ISNULL(is_deleted, 0) = 0;
-      `);
-
-    if (!existing.recordset.length) {
-      await rollbackSafely(transaction);
-      transaction = null;
-
-      return res.status(404).json({
+    if (!nationalId || !validNationalId(nationalId)) {
+      return res.status(400).json({
         success: false,
-        message: "السجل المطلوب غير موجود أو سبق حذفه.",
+        message: "الرقم القومي غير صحيح",
       });
     }
 
-    const person = existing.recordset[0];
-    const oldStatus = clean(person.security_situation) || "غير محدد";
+    // لا نسمح بتغيير الرقم القومي من خلال body
+    const body = {
+      ...req.body,
+      national_id_number: nationalId,
+    };
 
-    // Update ONLY security status and notes.
-    await new sql.Request(transaction)
-      .input("personId", sql.Int, person.id)
-      .input("securityStatus", sql.NVarChar(50), securityStatus)
-      .input("notes", sql.NVarChar(sql.MAX), notes).query(`
-        UPDATE dbo.security_persons
-        SET
-          security_situation = @securityStatus,
-          notes = @notes,
-          updated_at = SYSDATETIME()
-        WHERE
-          id = @personId
-          AND ISNULL(is_deleted, 0) = 0;
-      `);
+    // التحقق من صحة البيانات
+    const validation = validatePersonBody(body, nationalId);
 
-    await saveStatusHistory(
-      transaction,
-      person.id,
-      oldStatus,
-      securityStatus,
-      notes,
-      req.user?.id,
+    if (validation) {
+      return res.status(400).json({
+        success: false,
+        message: validation,
+      });
+    }
+
+    await transaction.begin();
+
+    // البحث عن الشخص باستخدام الرقم القومي الأصلي
+    const existingRequest = new sql.Request(transaction);
+
+    existingRequest.input(
+      "national_id_number",
+      sql.VarChar(14),
+      nationalId
     );
 
-    // Synchronize the status in both coordinator tables.
-    // Do not modify coordinator notes or any other personal data here.
-    const synchronization = await updateCoordinatorStatusInTransaction(
+    const existingResult = await existingRequest.query(`
+      SELECT TOP 1 *
+      FROM dbo.security_persons
+      WHERE national_id_number = @national_id_number
+    `);
+
+    if (!existingResult.recordset.length) {
+      await transaction.rollback();
+
+      return res.status(404).json({
+        success: false,
+        message: "لم يتم العثور على سجل بهذا الرقم القومي",
+      });
+    }
+
+    const existingPerson = existingResult.recordset[0];
+
+    // تحديث بيانات الشخص دون تغيير الرقم القومي
+    const updateRequest = new sql.Request(transaction);
+
+    bindPerson(updateRequest, body);
+
+    updateRequest.input(
+      "person_id",
+      sql.Int,
+      existingPerson.id
+    );
+
+    await updateRequest.query(`
+      UPDATE dbo.security_persons
+      SET
+        full_name = @full_name,
+        birth_date = @birth_date,
+        birth_place = @birth_place,
+        job = @job,
+        parent_company = @parent_company,
+        advertising_company = @advertising_company,
+        branch = @branch,
+        governorate = @governorate,
+        file_type = @file_type,
+        security_status = @security_status,
+        notes = @notes,
+        updated_at = GETDATE()
+      WHERE id = @person_id
+    `);
+
+    // تسجيل تغيير الموقف الأمني في سجل التاريخ
+    await saveStatusHistory(
+      transaction,
+      existingPerson.id,
+      existingPerson.security_status,
+      body.security_status,
+      req.user?.id || null,
+      body.status_note || null
+    );
+
+    // مزامنة الموقف الأمني مع جدول المنسقين
+    await updateCoordinatorStatusInTransaction(
       transaction,
       nationalId,
-      securityStatus,
+      body.security_status
     );
 
     await transaction.commit();
-    transaction = null;
 
-    return res.json({
+    return res.status(200).json({
       success: true,
-      message: "تم تحديث الموقف الأمني والملاحظات بنجاح.",
-      person: {
-        id: person.id,
-        name: person.name,
-        national_id_number: person.national_id_number,
-        job: person.job,
-        security_status: securityStatus,
-        notes,
+      message: "تم تحديث بيانات السجل الأمني بنجاح",
+      data: {
+        id: existingPerson.id,
+        national_id_number: nationalId,
+        security_status: body.security_status,
       },
-      synchronization,
     });
   } catch (error) {
     await rollbackSafely(transaction);
 
-    return sendServerError(res, error, "تحديث الموقف الأمني والملاحظات");
+    console.error("updateSecurityRecord error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "حدث خطأ أثناء تحديث السجل الأمني",
+      error: error.message,
+    });
   }
-}
+};
 
 /* -------------------------------------------------------------------------- */
 /* PUT /security/incidents/:incidentId                                        */
@@ -1797,11 +2051,9 @@ export async function updateSecurityIncident(req, res) {
 
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    const existing = await new sql.Request(transaction).input(
-      "incidentId",
-      sql.Int,
-      incidentId,
-    ).query(`
+    const existing = await new sql.Request(transaction)
+      .input("incidentId", sql.Int, incidentId)
+      .query(`
         SELECT
           i.id,
           i.security_person_id
@@ -1895,11 +2147,9 @@ export async function updateSecurityPermit(req, res) {
 
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    const existing = await new sql.Request(transaction).input(
-      "permitId",
-      sql.Int,
-      permitId,
-    ).query(`
+    const existing = await new sql.Request(transaction)
+      .input("permitId", sql.Int, permitId)
+      .query(`
         SELECT
           pm.id,
           pm.security_person_id
@@ -1984,11 +2234,9 @@ export async function deleteSecurityRecord(req, res) {
 
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    const findResult = await new sql.Request(transaction).input(
-      "nationalId",
-      sql.NVarChar(50),
-      nationalId,
-    ).query(`
+    const findResult = await new sql.Request(transaction)
+      .input("nationalId", sql.NVarChar(50), nationalId)
+      .query(`
         SELECT TOP 1
           id,
           name,
@@ -2011,7 +2259,8 @@ export async function deleteSecurityRecord(req, res) {
 
     const person = findResult.recordset[0];
 
-    await new sql.Request(transaction).input("personId", sql.Int, person.id)
+    await new sql.Request(transaction)
+      .input("personId", sql.Int, person.id)
       .query(`
         UPDATE dbo.security_persons
         SET
@@ -2047,9 +2296,9 @@ export async function deleteSecurityRecord(req, res) {
 
 export const checkSecurityNationalId = async (req, res) => {
   try {
-    const nationalId = String(req.params.nationalId || "").trim();
+    const nationalId = clean(req.params.nationalId);
 
-    if (!/^\d{14}$/.test(nationalId)) {
+    if (!validNationalId(nationalId)) {
       return res.status(400).json({
         success: false,
         message: "الرقم القومي يجب أن يتكون من 14 رقمًا.",
@@ -2060,23 +2309,32 @@ export const checkSecurityNationalId = async (req, res) => {
 
     const result = await pool
       .request()
-      .input("nationalId", sql.VarChar(14), nationalId).query(`
+      .input("nationalId", sql.NVarChar(50), nationalId)
+      .query(`
         SELECT TOP 1
           national_id_number,
           security_situation,
           notes
         FROM dbo.security_persons
-        WHERE national_id_number = @nationalId
+        WHERE
+          LTRIM(RTRIM(national_id_number)) = @nationalId
           AND ISNULL(is_deleted, 0) = 0;
       `);
 
-    const record = result.recordset[0];
+    const record = result.recordset[0] || null;
+
+    const securityStatus = record
+      ? getSecurityStatusFromNotes(
+          record.notes,
+          record.security_situation,
+        )
+      : null;
 
     return res.json({
       success: true,
       exists: Boolean(record),
-      blocked: record?.security_situation === "بلوك",
-      security_status: record?.security_situation || null,
+      blocked: securityStatus === "بلوك",
+      security_status: securityStatus,
       notes: record?.notes || "",
     });
   } catch (error) {

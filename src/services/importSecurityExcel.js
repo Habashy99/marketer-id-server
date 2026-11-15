@@ -1,536 +1,513 @@
 
+import "dotenv/config";
 import XlsxPopulate from "xlsx-populate";
 import { retailPoolPromise, sql } from "../config/db.js";
 
-const BATCH_SIZE = 100;
-const REQUEST_TIMEOUT = 120000;
+/* -------------------------------------------------------------------------- */
+/* Configuration                                                              */
+/* -------------------------------------------------------------------------- */
 
-// --------------------------------------------------
-// EXCEL VALUE HELPERS
-// --------------------------------------------------
+const EXCEL_PATH =
+  process.env.SECURITY_INCIDENTS_EXCEL_PATH || "D:/security2.xlsx";
 
-function toText(value) {
-    if (value === undefined || value === null) {
-        return null;
-    }
+const EXCEL_PASSWORD =
+  process.env.SECURITY_INCIDENTS_EXCEL_PASSWORD || undefined;
 
-    if (value instanceof Date) {
-        return value.toISOString();
-    }
+const SHEET_NAME = "Chart1";
+const IMPORT_LIMIT = 35;
 
-    const result = String(value);
+/* -------------------------------------------------------------------------- */
+/* Helpers                                                                    */
+/* -------------------------------------------------------------------------- */
 
-    return result.trim() === "" ? null : result;
+function cleanText(value) {
+  if (value === null || value === undefined) return null;
+
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === "object") return null;
+
+  const text = String(value).trim();
+
+  return text.length ? text : null;
 }
 
-function getSheetRows(workbook, sheetName) {
-    const sheet = workbook.sheet(sheetName);
+function normalizeArabicDigits(value) {
+  const arabicDigits = "٠١٢٣٤٥٦٧٨٩";
+  const persianDigits = "۰۱۲۳۴۵۶۷۸۹";
 
-    if (!sheet) {
-        throw new Error(`Worksheet "${sheetName}" was not found.`);
-    }
-
-    const range = sheet.usedRange();
-
-    if (!range) {
-        return [];
-    }
-
-    const rows = range.value();
-
-    return Array.isArray(rows) ? rows : [];
+  return String(value)
+    .replace(/[٠-٩]/g, (d) => arabicDigits.indexOf(d))
+    .replace(/[۰-۹]/g, (d) => persianDigits.indexOf(d));
 }
 
-function isEmptyRow(row, columnCount) {
-    return row
-        .slice(0, columnCount)
-        .every(
-            (value) =>
-                value === undefined ||
-                value === null ||
-                String(value).trim() === ""
-        );
+function normalizeDate(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  // Excel serial date
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const date = new Date(
+      Date.UTC(1899, 11, 30) + value * 86400000
+    );
+
+    return date.toISOString().slice(0, 10);
+  }
+
+  let text = normalizeArabicDigits(value).trim();
+
+  if (!text) return null;
+
+  // dd/mm/yyyy or dd-mm-yyyy
+  const dmy = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+
+  if (dmy) {
+    const day = Number(dmy[1]);
+    const month = Number(dmy[2]);
+    const year = Number(dmy[3]);
+
+    const date = new Date(Date.UTC(year, month - 1, day));
+
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      return null;
+    }
+
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  // yyyy-mm-dd
+  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+
+  if (iso) {
+    const year = Number(iso[1]);
+    const month = Number(iso[2]);
+    const day = Number(iso[3]);
+
+    const date = new Date(Date.UTC(year, month - 1, day));
+
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      return null;
+    }
+
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  return null;
 }
 
-// --------------------------------------------------
-// INCIDENT EXCEL MAPPING
-// --------------------------------------------------
+function normalizeNationalId(value) {
+  const text = normalizeArabicDigits(value || "")
+    .replace(/\s/g, "")
+    .trim();
 
-function buildIncidentRows(rows) {
-    const result = [];
-
-    for (let index = 1; index < rows.length; index++) {
-        const row = rows[index] ?? [];
-
-        if (isEmptyRow(row, 11)) {
-            continue;
-        }
-
-        result.push({
-            source_record_number: toText(row[0]),
-            name: toText(row[1]),
-            birth_place: toText(row[2]),
-            birth_date: toText(row[3]),
-            national_id_number: toText(row[4]),
-            branch: toText(row[5]),
-            incident_notes: toText(row[6]),
-            stolen_goods: toText(row[7]),
-            stolen_goods_value: toText(row[8]),
-            incident_date: toText(row[9]),
-            notes: toText(row[10]),
-            source_excel_row: index + 1,
-        });
-    }
-
-    return result;
+  return /^\d{14}$/.test(text) ? text : null;
 }
 
-// --------------------------------------------------
-// PERMITS EXCEL MAPPING
-// --------------------------------------------------
+function normalizeMoney(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
 
-function buildPermitRows(rows) {
-    const result = [];
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
 
-    for (let index = 1; index < rows.length; index++) {
-        const row = rows[index] ?? [];
+  let text = normalizeArabicDigits(value)
+    .replace(/٬/g, "")
+    .replace(/٫/g, ".")
+    .replace(/,/g, "")
+    .replace(/[^\d.-]/g, "");
 
-        if (isEmptyRow(row, 9)) {
-            continue;
-        }
+  if (!text || text === "-" || text === ".") return null;
 
-        result.push({
-            source_record_number: String(index + 1),
-            permit_number: toText(row[0]),
-            name: toText(row[1]),
-            birth_date: toText(row[2]),
-            birth_place: toText(row[3]),
-            id_card_number: toText(row[4]),
-            company_name: toText(row[5]),
-            issue_date: toText(row[6]),
-            branch: toText(row[7]),
-            notes: toText(row[8]),
-            source_excel_row: index + 1,
-        });
-    }
+  const number = Number(text);
 
-    return result;
+  return Number.isFinite(number) ? number : null;
 }
 
-// --------------------------------------------------
-// SQL COLUMN DEFINITIONS
-// --------------------------------------------------
+function combineNotes(first, second) {
+  const values = [cleanText(first), cleanText(second)].filter(Boolean);
 
-const incidentColumns = [
-    {
-        name: "source_record_number",
-        type: sql.NVarChar(100),
-        maxLength: 100,
-    },
-    {
-        name: "name",
-        type: sql.NVarChar(255),
-        maxLength: 255,
-    },
-    {
-        name: "birth_place",
-        type: sql.NVarChar(150),
-        maxLength: 150,
-    },
-    {
-        name: "birth_date",
-        type: sql.NVarChar(50),
-        maxLength: 50,
-    },
-    {
-        name: "national_id_number",
-        type: sql.NVarChar(sql.MAX),
-    },
-    {
-        name: "branch",
-        type: sql.NVarChar(255),
-        maxLength: 255,
-    },
-    {
-        name: "incident_notes",
-        type: sql.NVarChar(sql.MAX),
-    },
-    {
-        name: "stolen_goods",
-        type: sql.NVarChar(sql.MAX),
-    },
-    {
-        name: "stolen_goods_value",
-        type: sql.NVarChar(100),
-        maxLength: 100,
-    },
-    {
-        name: "incident_date",
-        type: sql.NVarChar(sql.MAX),
-    },
-    {
-        name: "notes",
-        type: sql.NVarChar(sql.MAX),
-    },
-    {
-        name: "source_excel_row",
-        type: sql.Int,
-    },
-];
-
-const permitColumns = [
-    {
-        name: "source_record_number",
-        type: sql.NVarChar(100),
-        maxLength: 100,
-    },
-    {
-        name: "permit_number",
-        type: sql.NVarChar(100),
-        maxLength: 100,
-    },
-    {
-        name: "name",
-        type: sql.NVarChar(255),
-        maxLength: 255,
-    },
-    {
-        name: "birth_date",
-        type: sql.NVarChar(50),
-        maxLength: 50,
-    },
-    {
-        name: "birth_place",
-        type: sql.NVarChar(150),
-        maxLength: 150,
-    },
-    {
-        name: "id_card_number",
-        type: sql.NVarChar(100),
-        maxLength: 100,
-    },
-    {
-        name: "company_name",
-        type: sql.NVarChar(255),
-        maxLength: 255,
-    },
-    {
-        name: "issue_date",
-        type: sql.NVarChar(50),
-        maxLength: 50,
-    },
-    {
-        name: "branch",
-        type: sql.NVarChar(255),
-        maxLength: 255,
-    },
-    {
-        name: "notes",
-        type: sql.NVarChar(sql.MAX),
-    },
-    {
-        name: "source_excel_row",
-        type: sql.Int,
-    },
-];
-
-// --------------------------------------------------
-// VALIDATE FIELD LENGTHS
-// --------------------------------------------------
-
-function validateRecords(records, columns, tableName) {
-    const errors = [];
-
-    for (const record of records) {
-        for (const column of columns) {
-            if (column.maxLength === undefined) {
-                continue;
-            }
-
-            const value = record[column.name];
-
-            if (
-                value !== null &&
-                value !== undefined &&
-                String(value).length > column.maxLength
-            ) {
-                errors.push({
-                    table: tableName,
-                    excelRow: record.source_excel_row,
-                    column: column.name,
-                    actualLength: String(value).length,
-                    maximumLength: column.maxLength,
-                    value: String(value).slice(0, 150),
-                });
-            }
-        }
-    }
-
-    if (errors.length > 0) {
-        console.error(`Found ${errors.length} oversized values:`);
-        console.table(errors.slice(0, 30));
-
-        throw new Error(
-            `${tableName}: ${errors.length} values exceed SQL column lengths. ` +
-            "No SQL transaction was started."
-        );
-    }
+  return values.length ? values.join("\n\n") : null;
 }
 
-// --------------------------------------------------
-// PARAMETERIZED BATCH INSERT
-// --------------------------------------------------
+function mapExcelRow(row, excelRowNumber) {
+  return {
+    sourceRecordNumber: cleanText(row[0]),
+    name: cleanText(row[1]),
+    birthPlace: cleanText(row[2]),
+    birthDate: normalizeDate(row[3]),
+    nationalId: normalizeNationalId(row[4]),
+    branch: cleanText(row[5]),
+    notes: combineNotes(row[6], row[10]),
+    stolenGoods: cleanText(row[7]),
+    stolenGoodsValue: normalizeMoney(row[8]),
+    incidentDate: normalizeDate(row[9]),
+    excelRowNumber,
+  };
+}
 
-async function insertBatch(transaction, tableName, columns, records) {
-    if (records.length === 0) {
-        return;
-    }
+/* -------------------------------------------------------------------------- */
+/* Person matching / insertion                                                */
+/* -------------------------------------------------------------------------- */
 
+async function findOrCreatePerson(transaction, record) {
+  if (!record.name) {
+    throw new Error(
+      `الاسم فارغ في صف Excel رقم ${record.excelRowNumber}`
+    );
+  }
+
+  // 1. Match by national ID
+  if (record.nationalId) {
     const request = new sql.Request(transaction);
-    request.timeout = REQUEST_TIMEOUT;
 
-    const columnNames = columns
-        .map((column) => `[${column.name}]`)
-        .join(", ");
+    request.input(
+      "nationalId",
+      sql.NVarChar(100),
+      record.nationalId
+    );
 
-    const valueGroups = [];
-
-    for (let rowIndex = 0; rowIndex < records.length; rowIndex++) {
-        const record = records[rowIndex];
-        const placeholders = [];
-
-        for (let columnIndex = 0; columnIndex < columns.length; columnIndex++) {
-            const column = columns[columnIndex];
-            const parameterName = `p${rowIndex}_${columnIndex}`;
-
-            request.input(
-                parameterName,
-                column.type,
-                record[column.name] ?? null
-            );
-
-            placeholders.push(`@${parameterName}`);
-        }
-
-        valueGroups.push(`(${placeholders.join(", ")})`);
-    }
-
-    const query = `
-        INSERT INTO ${tableName} (${columnNames})
-        VALUES ${valueGroups.join(", ")};
-    `;
-
-    await request.query(query);
-}
-
-// --------------------------------------------------
-// CHECK STAGING TABLES
-// --------------------------------------------------
-
-async function ensureStagingTablesAreEmpty(transaction) {
-    const incidentResult = await new sql.Request(transaction).query(`
-        SELECT COUNT_BIG(*) AS total
-        FROM dbo.security_incidents_import;
+    const result = await request.query(`
+      SELECT TOP (2) id
+      FROM dbo.security_persons WITH (UPDLOCK, HOLDLOCK)
+      WHERE national_id_number = @nationalId
+        AND ISNULL(is_deleted, 0) = 0
+      ORDER BY id;
     `);
 
-    const permitResult = await new sql.Request(transaction).query(`
-        SELECT COUNT_BIG(*) AS total
-        FROM dbo.security_permits_import;
+    if (result.recordset.length > 1) {
+      throw new Error(
+        `الرقم القومي ${record.nationalId} مرتبط بأكثر من شخص.`
+      );
+    }
+
+    if (result.recordset.length === 1) {
+      return {
+        id: result.recordset[0].id,
+        created: false,
+      };
+    }
+  } else {
+    // 2. Fallback only when the combination is unambiguous
+    const request = new sql.Request(transaction);
+
+    request.input("name", sql.NVarChar(510), record.name);
+    request.input("birthPlace", sql.NVarChar(300), record.birthPlace);
+    request.input(
+      "birthDate",
+      sql.Date,
+      record.birthDate ? new Date(`${record.birthDate}T00:00:00Z`) : null
+    );
+
+    const result = await request.query(`
+      SELECT TOP (2) id
+      FROM dbo.security_persons WITH (UPDLOCK, HOLDLOCK)
+      WHERE name = @name
+        AND (
+          birth_place = @birthPlace
+          OR (birth_place IS NULL AND @birthPlace IS NULL)
+        )
+        AND (
+          birth_date = @birthDate
+          OR (birth_date IS NULL AND @birthDate IS NULL)
+        )
+        AND ISNULL(is_deleted, 0) = 0
+      ORDER BY id;
     `);
 
-    const incidentsCount = Number(incidentResult.recordset[0].total);
-    const permitsCount = Number(permitResult.recordset[0].total);
-
-    if (incidentsCount > 0 || permitsCount > 0) {
-        throw new Error(
-            "Import cancelled: staging tables are not empty. " +
-            `Incidents: ${incidentsCount}, Permits: ${permitsCount}.`
-        );
+    if (result.recordset.length > 1) {
+      throw new Error(
+        `لا يوجد رقم قومي صالح، والاسم "${record.name}" يطابق أكثر من شخص.`
+      );
     }
+
+    if (result.recordset.length === 1) {
+      return {
+        id: result.recordset[0].id,
+        created: false,
+      };
+    }
+  }
+
+  // 3. Create a new person
+  const insertRequest = new sql.Request(transaction);
+
+  insertRequest.input("name", sql.NVarChar(510), record.name);
+  insertRequest.input(
+    "nationalId",
+    sql.NVarChar(100),
+    record.nationalId
+  );
+  insertRequest.input(
+    "birthPlace",
+    sql.NVarChar(300),
+    record.birthPlace
+  );
+  insertRequest.input(
+    "birthDate",
+    sql.Date,
+    record.birthDate ? new Date(`${record.birthDate}T00:00:00Z`) : null
+  );
+
+  const inserted = await insertRequest.query(`
+    INSERT INTO dbo.security_persons
+    (
+      name,
+      national_id_number,
+      birth_date,
+      birth_place,
+      security_situation,
+      created_at,
+      is_deleted
+    )
+    OUTPUT INSERTED.id
+    VALUES
+    (
+      @name,
+      @nationalId,
+      @birthDate,
+      @birthPlace,
+      N'غير محدد',
+      SYSDATETIME(),
+      0
+    );
+  `);
+
+  return {
+    id: inserted.recordset[0].id,
+    created: true,
+  };
 }
 
-// --------------------------------------------------
-// IMPORT RECORDS IN BATCHES
-// --------------------------------------------------
+/* -------------------------------------------------------------------------- */
+/* Incident insertion                                                         */
+/* -------------------------------------------------------------------------- */
 
-async function importRecords(
-    transaction,
-    records,
-    columns,
-    tableName,
-    label
-) {
-    for (let offset = 0; offset < records.length; offset += BATCH_SIZE) {
-        const batch = records.slice(offset, offset + BATCH_SIZE);
+async function insertIncident(transaction, personId, record) {
+  const request = new sql.Request(transaction);
 
-        await insertBatch(
-            transaction,
-            tableName,
-            columns,
-            batch
-        );
+  request.input("personId", sql.Int, personId);
+  request.input("branch", sql.NVarChar(510), record.branch);
+  request.input(
+    "stolenGoods",
+    sql.NVarChar(sql.MAX),
+    record.stolenGoods
+  );
+  request.input(
+    "stolenGoodsValue",
+    sql.Decimal(28, 4),
+    record.stolenGoodsValue
+  );
+  request.input(
+    "incidentDate",
+    sql.Date,
+    record.incidentDate
+      ? new Date(`${record.incidentDate}T00:00:00Z`)
+      : null
+  );
+  request.input("notes", sql.NVarChar(sql.MAX), record.notes);
 
-        const completed = Math.min(
-            offset + batch.length,
-            records.length
-        );
+  // Avoid importing an identical incident twice
+  const duplicate = await request.query(`
+    SELECT TOP (1) id
+    FROM dbo.security_incidents WITH (UPDLOCK, HOLDLOCK)
+    WHERE security_person_id = @personId
+      AND (branch = @branch OR (branch IS NULL AND @branch IS NULL))
+      AND (
+        stolen_goods = @stolenGoods
+        OR (stolen_goods IS NULL AND @stolenGoods IS NULL)
+      )
+      AND (
+        stolen_goods_value = @stolenGoodsValue
+        OR (
+          stolen_goods_value IS NULL
+          AND @stolenGoodsValue IS NULL
+        )
+      )
+      AND (
+        incident_date = @incidentDate
+        OR (incident_date IS NULL AND @incidentDate IS NULL)
+      )
+      AND (
+        notes = @notes
+        OR (notes IS NULL AND @notes IS NULL)
+      );
+  `);
 
-        console.log(`${label}: ${completed} / ${records.length}`);
-    }
+  if (duplicate.recordset.length) {
+    return {
+      inserted: false,
+      incidentId: duplicate.recordset[0].id,
+    };
+  }
+
+  const inserted = await request.query(`
+    INSERT INTO dbo.security_incidents
+    (
+      security_person_id,
+      branch,
+      stolen_goods,
+      stolen_goods_value,
+      incident_date,
+      notes
+    )
+    OUTPUT INSERTED.id
+    VALUES
+    (
+      @personId,
+      @branch,
+      @stolenGoods,
+      @stolenGoodsValue,
+      @incidentDate,
+      @notes
+    );
+  `);
+
+  return {
+    inserted: true,
+    incidentId: inserted.recordset[0].id,
+  };
 }
 
-// --------------------------------------------------
-// MAIN IMPORT FUNCTION
-// --------------------------------------------------
+/* -------------------------------------------------------------------------- */
+/* Main import                                                                */
+/* -------------------------------------------------------------------------- */
 
 async function importSecurityExcel() {
-    const incidentsPath =
-        process.env.SECURITY_INCIDENTS_EXCEL_PATH ||
-        "D:\\security2.xlsx";
+  console.log("======================================");
+  console.log("SECURITY INCIDENTS - LAST 35 ROWS");
+  console.log("======================================");
 
-    const permitsPath =
-        process.env.SECURITY_PERMITS_EXCEL_PATH ||
-        "D:\\مندوبين.xlsx";
+  console.log("Excel:", EXCEL_PATH);
+  console.log("Sheet:", SHEET_NAME);
 
-    const incidentsPassword =
-        process.env.SECURITY_INCIDENTS_EXCEL_PASSWORD;
+  const workbook = await XlsxPopulate.fromFileAsync(EXCEL_PATH, {
+    password: EXCEL_PASSWORD,
+  });
 
-    if (!incidentsPassword) {
-        throw new Error(
-            "SECURITY_INCIDENTS_EXCEL_PASSWORD is missing."
-        );
+  const sheet = workbook.sheet(SHEET_NAME);
+
+  if (!sheet) {
+    throw new Error(`الشيت ${SHEET_NAME} غير موجود في ملف Excel.`);
+  }
+
+  const values = sheet.usedRange().value();
+
+  if (!Array.isArray(values) || values.length < 2) {
+    throw new Error("الشيت لا يحتوي على بيانات كافية.");
+  }
+
+  // First row is the header. Keep the last 35 non-empty data rows.
+  const dataRows = values
+    .slice(1)
+    .map((row, index) => ({
+      row,
+      excelRowNumber: index + 2,
+    }))
+    .filter(({ row }) =>
+      Array.isArray(row) &&
+      row.some((value) => cleanText(value) !== null)
+    );
+
+  const selectedRows = dataRows.slice(-IMPORT_LIMIT);
+
+  if (!selectedRows.length) {
+    throw new Error("لم يتم العثور على سجلات للاستيراد.");
+  }
+
+  const records = selectedRows.map(({ row, excelRowNumber }) =>
+    mapExcelRow(row, excelRowNumber)
+  );
+
+  console.log("Total data rows:", dataRows.length);
+  console.log("Selected rows:", records.length);
+
+  for (const record of records) {
+    console.log(
+      `Excel row ${record.excelRowNumber}: ${record.name || "NO NAME"}`
+    );
+  }
+
+  const pool = await retailPoolPromise;
+  const transaction = new sql.Transaction(pool);
+
+  let insertedPeople = 0;
+  let existingPeople = 0;
+  let insertedIncidents = 0;
+  let skippedIncidents = 0;
+
+  try {
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+
+    for (const record of records) {
+      const person = await findOrCreatePerson(transaction, record);
+
+      if (person.created) {
+        insertedPeople++;
+      } else {
+        existingPeople++;
+      }
+
+      const incident = await insertIncident(
+        transaction,
+        person.id,
+        record
+      );
+
+      if (incident.inserted) {
+        insertedIncidents++;
+      } else {
+        skippedIncidents++;
+      }
+
+      console.log(
+        `Person ID: ${person.id} | Incident ID: ${incident.incidentId} | ${
+          incident.inserted ? "INSERTED" : "ALREADY EXISTS"
+        }`
+      );
     }
 
-    console.log("Reading security incidents workbook...");
+    await transaction.commit();
 
-    const incidentsWorkbook = await XlsxPopulate.fromFileAsync(
-        incidentsPath,
-        { password: incidentsPassword }
-    );
-
-    const incidentSheetRows = getSheetRows(
-        incidentsWorkbook,
-        "Chart1"
-    );
-
-    const incidents = buildIncidentRows(incidentSheetRows);
-
-    console.log(`Prepared ${incidents.length} incident records.`);
-
-    console.log("Reading permits workbook...");
-
-    const permitsWorkbook = await XlsxPopulate.fromFileAsync(
-        permitsPath
-    );
-
-    const permitSheetRows = getSheetRows(
-        permitsWorkbook,
-        "Sheet1"
-    );
-
-    const permits = buildPermitRows(permitSheetRows);
-
-    console.log(`Prepared ${permits.length} permit records.`);
-
-    if (incidents.length === 0 || permits.length === 0) {
-        throw new Error(
-            "Import cancelled: one of the workbooks contains no usable records."
-        );
-    }
-
-    console.log("Validating incident field lengths...");
-
-    validateRecords(
-        incidents,
-        incidentColumns,
-        "security_incidents_import"
-    );
-
-    console.log("Incident records validated.");
-
-    console.log("Validating permit field lengths...");
-
-    validateRecords(
-        permits,
-        permitColumns,
-        "security_permits_import"
-    );
-
-    console.log("Permit records validated.");
-
-    const pool = await retailPoolPromise;
-    const transaction = new sql.Transaction(pool);
-
-    let transactionStarted = false;
-
-    try {
-        console.log("Starting SQL Server transaction...");
-
-        await transaction.begin(
-            sql.ISOLATION_LEVEL.READ_COMMITTED
-        );
-
-        transactionStarted = true;
-
-        await ensureStagingTablesAreEmpty(transaction);
-
-        console.log("Importing incidents...");
-
-        await importRecords(
-            transaction,
-            incidents,
-            incidentColumns,
-            "dbo.security_incidents_import",
-            "Incidents"
-        );
-
-        console.log("Importing permits...");
-
-        await importRecords(
-            transaction,
-            permits,
-            permitColumns,
-            "dbo.security_permits_import",
-            "Permits"
-        );
-
-        await transaction.commit();
-        transactionStarted = false;
-
-        console.log("\n======================================");
-        console.log("SECURITY EXCEL IMPORT COMPLETED");
-        console.log("======================================");
-
-        console.log(`Incidents imported: ${incidents.length}`);
-        console.log(`Permits imported: ${permits.length}`);
-        console.log("Both staging tables were populated successfully.");
-    } catch (error) {
-        if (transactionStarted) {
-            try {
-                await transaction.rollback();
-                console.log("SQL transaction rolled back successfully.");
-            } catch (rollbackError) {
-                console.error(
-                    "Rollback also failed:",
-                    rollbackError.message
-                );
-            }
-
-            transactionStarted = false;
-        }
-
-        console.error("Import failed.");
-        throw error;
-    }
+    console.log("\n======================================");
+    console.log("IMPORT COMPLETED SUCCESSFULLY");
+    console.log("======================================");
+    console.log("Rows processed:", records.length);
+    console.log("New persons:", insertedPeople);
+    console.log("Existing persons:", existingPeople);
+    console.log("New incidents:", insertedIncidents);
+    console.log("Skipped duplicate incidents:", skippedIncidents);
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
 }
 
-// --------------------------------------------------
-// EXECUTION
-// --------------------------------------------------
+/* -------------------------------------------------------------------------- */
+/* Run                                                                        */
+/* -------------------------------------------------------------------------- */
 
-importSecurityExcel().catch((error) => {
-    console.error("\nSECURITY IMPORT ERROR:");
-    console.error(error);
-
+importSecurityExcel()
+  .then(() => {
+    console.log("Security Excel import finished.");
+  })
+  .catch((error) => {
+    console.error("IMPORT FAILED:", error);
     process.exitCode = 1;
-});
+  });
