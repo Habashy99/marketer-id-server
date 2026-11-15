@@ -14,7 +14,13 @@ const EXCEL_PASSWORD =
   process.env.SECURITY_INCIDENTS_EXCEL_PASSWORD || undefined;
 
 const SHEET_NAME = "Chart1";
-const IMPORT_LIMIT = 35;
+
+// أرقام السجلات المطلوبة من ملف Excel
+const FIRST_RECORD_NUMBER = 33599;
+const LAST_RECORD_NUMBER = 33632;
+
+const EXPECTED_RECORDS_COUNT =
+  LAST_RECORD_NUMBER - FIRST_RECORD_NUMBER + 1;
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -61,12 +67,12 @@ function normalizeDate(value) {
     return date.toISOString().slice(0, 10);
   }
 
-  let text = normalizeArabicDigits(value).trim();
+  const text = normalizeArabicDigits(value).trim();
 
   if (!text) return null;
 
   // dd/mm/yyyy or dd-mm-yyyy
-  const dmy = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  const dmy = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
 
   if (dmy) {
     const day = Number(dmy[1]);
@@ -127,7 +133,7 @@ function normalizeMoney(value) {
     return Number.isFinite(value) ? value : null;
   }
 
-  let text = normalizeArabicDigits(value)
+  const text = normalizeArabicDigits(value)
     .replace(/٬/g, "")
     .replace(/٫/g, ".")
     .replace(/,/g, "")
@@ -152,7 +158,11 @@ function mapExcelRow(row, excelRowNumber) {
     name: cleanText(row[1]),
     birthPlace: cleanText(row[2]),
     birthDate: normalizeDate(row[3]),
+
+    // لو الخانة تحتوي على "تحت السن" ستكون القيمة null.
+    // لا نستخرج رقم الضامن من العنوان.
     nationalId: normalizeNationalId(row[4]),
+
     branch: cleanText(row[5]),
     notes: combineNotes(row[6], row[10]),
     stolenGoods: cleanText(row[7]),
@@ -212,7 +222,9 @@ async function findOrCreatePerson(transaction, record) {
     request.input(
       "birthDate",
       sql.Date,
-      record.birthDate ? new Date(`${record.birthDate}T00:00:00Z`) : null
+      record.birthDate
+        ? new Date(`${record.birthDate}T00:00:00Z`)
+        : null
     );
 
     const result = await request.query(`
@@ -262,7 +274,9 @@ async function findOrCreatePerson(transaction, record) {
   insertRequest.input(
     "birthDate",
     sql.Date,
-    record.birthDate ? new Date(`${record.birthDate}T00:00:00Z`) : null
+    record.birthDate
+      ? new Date(`${record.birthDate}T00:00:00Z`)
+      : null
   );
 
   const inserted = await insertRequest.query(`
@@ -391,11 +405,15 @@ async function insertIncident(transaction, personId, record) {
 
 async function importSecurityExcel() {
   console.log("======================================");
-  console.log("SECURITY INCIDENTS - LAST 35 ROWS");
+  console.log("SECURITY INCIDENTS - SELECTED RECORDS");
   console.log("======================================");
 
   console.log("Excel:", EXCEL_PATH);
   console.log("Sheet:", SHEET_NAME);
+  console.log(
+    "Source records:",
+    `${FIRST_RECORD_NUMBER} - ${LAST_RECORD_NUMBER}`
+  );
 
   const workbook = await XlsxPopulate.fromFileAsync(EXCEL_PATH, {
     password: EXCEL_PASSWORD,
@@ -413,7 +431,7 @@ async function importSecurityExcel() {
     throw new Error("الشيت لا يحتوي على بيانات كافية.");
   }
 
-  // First row is the header. Keep the last 35 non-empty data rows.
+  // First row is the header.
   const dataRows = values
     .slice(1)
     .map((row, index) => ({
@@ -425,22 +443,71 @@ async function importSecurityExcel() {
       row.some((value) => cleanText(value) !== null)
     );
 
-  const selectedRows = dataRows.slice(-IMPORT_LIMIT);
+  // Select exactly source records 33599 through 33632.
+  const records = dataRows
+    .map(({ row, excelRowNumber }) =>
+      mapExcelRow(row, excelRowNumber)
+    )
+    .filter((record) => {
+      const sourceNumber = Number(record.sourceRecordNumber);
 
-  if (!selectedRows.length) {
-    throw new Error("لم يتم العثور على سجلات للاستيراد.");
+      return (
+        Number.isInteger(sourceNumber) &&
+        sourceNumber >= FIRST_RECORD_NUMBER &&
+        sourceNumber <= LAST_RECORD_NUMBER
+      );
+    })
+    .sort(
+      (a, b) =>
+        Number(a.sourceRecordNumber) -
+        Number(b.sourceRecordNumber)
+    );
+
+  console.log("Total data rows in Excel:", dataRows.length);
+  console.log("Selected records:", records.length);
+
+  // Safety check: stop if all 34 records are not found.
+  if (records.length !== EXPECTED_RECORDS_COUNT) {
+    const foundNumbers = new Set(
+      records.map((record) => Number(record.sourceRecordNumber))
+    );
+
+    const missingNumbers = [];
+
+    for (
+      let number = FIRST_RECORD_NUMBER;
+      number <= LAST_RECORD_NUMBER;
+      number++
+    ) {
+      if (!foundNumbers.has(number)) {
+        missingNumbers.push(number);
+      }
+    }
+
+    throw new Error(
+      `المتوقع ${EXPECTED_RECORDS_COUNT} سجل، لكن تم العثور على ${records.length} فقط. ` +
+      `السجلات غير الموجودة: ${missingNumbers.join(", ")}. ` +
+      "تم إيقاف الاستيراد ولم يتم إدخال أي بيانات."
+    );
   }
 
-  const records = selectedRows.map(({ row, excelRowNumber }) =>
-    mapExcelRow(row, excelRowNumber)
-  );
-
-  console.log("Total data rows:", dataRows.length);
-  console.log("Selected rows:", records.length);
+  console.log("--------------------------------------");
 
   for (const record of records) {
     console.log(
-      `Excel row ${record.excelRowNumber}: ${record.name || "NO NAME"}`
+      `Source: ${record.sourceRecordNumber} | ` +
+      `Excel row: ${record.excelRowNumber} | ` +
+      `Name: ${record.name || "NO NAME"} | ` +
+      `National ID: ${record.nationalId || "تحت السن / غير متوفر"}`
+    );
+  }
+
+  // Validate names before starting the transaction.
+  const invalidRecords = records.filter((record) => !record.name);
+
+  if (invalidRecords.length) {
+    throw new Error(
+      `يوجد ${invalidRecords.length} سجل بدون اسم. تم إيقاف الاستيراد.`
     );
   }
 
@@ -456,6 +523,11 @@ async function importSecurityExcel() {
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
     for (const record of records) {
+      console.log("--------------------------------------");
+      console.log(
+        `Processing source record ${record.sourceRecordNumber}: ${record.name}`
+      );
+
       const person = await findOrCreatePerson(transaction, record);
 
       if (person.created) {
@@ -477,9 +549,10 @@ async function importSecurityExcel() {
       }
 
       console.log(
-        `Person ID: ${person.id} | Incident ID: ${incident.incidentId} | ${
-          incident.inserted ? "INSERTED" : "ALREADY EXISTS"
-        }`
+        `Person ID: ${person.id} | ` +
+        `Person: ${person.created ? "CREATED" : "EXISTING"} | ` +
+        `Incident ID: ${incident.incidentId} | ` +
+        `${incident.inserted ? "INSERTED" : "ALREADY EXISTS"}`
       );
     }
 
@@ -488,11 +561,13 @@ async function importSecurityExcel() {
     console.log("\n======================================");
     console.log("IMPORT COMPLETED SUCCESSFULLY");
     console.log("======================================");
+    console.log("Source records:", `${FIRST_RECORD_NUMBER}-${LAST_RECORD_NUMBER}`);
     console.log("Rows processed:", records.length);
     console.log("New persons:", insertedPeople);
     console.log("Existing persons:", existingPeople);
     console.log("New incidents:", insertedIncidents);
     console.log("Skipped duplicate incidents:", skippedIncidents);
+    console.log("======================================");
   } catch (error) {
     await transaction.rollback();
     throw error;
