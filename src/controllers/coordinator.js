@@ -152,6 +152,7 @@ const CoordinatorController = {
   /* ---------------------------------------------------------------------- */
 
 
+
 getAllCoordinators: async (req, res) => {
   try {
     const {
@@ -161,91 +162,279 @@ getAllCoordinators: async (req, res) => {
       supplierId,
       branchId,
       advertisingCompanyId,
+      search,
+      supplierSearch,
+      branchSearch,
     } = req.query;
 
-    const pool = await retailPoolPromise;
-    const request = pool.request();
-    const conditions = [];
+    // Pagination settings
+    const requestedPage = Number(req.query.page ?? 1);
+    const limit = Number(req.query.limit ?? 50);
+    const allowedLimits = [25, 50, 100];
 
-    if (code !== undefined && code !== "") {
-      if (!isValidPositiveInteger(code)) {
-        return res.status(400).json({
-          message: "Invalid coordinator code",
-        });
-      }
-
-      request.input("code", sql.Int, Number(code));
-      conditions.push("c.code = @code");
-    }
-
-    if (typeof job === "string" && job.trim()) {
-      request.input("job", sql.NVarChar(255), job.trim());
-      conditions.push("LTRIM(RTRIM(c.job)) = @job");
-    }
-
-    if (filter === "expired") {
-      conditions.push(`
-        (
-          LTRIM(RTRIM(c.states)) = N'غير مفعل'
-          OR c.health_certificate_expiry_date < CAST(GETDATE() AS DATE)
-        )
-      `);
-    }
-
-    if (supplierId !== undefined && supplierId !== "") {
-      if (!isValidPositiveInteger(supplierId)) {
-        return res.status(400).json({
-          message: "Invalid supplier ID",
-        });
-      }
-
-      request.input(
-        "supplierId",
-        sql.NVarChar(255),
-        String(Number(supplierId)),
-      );
-
-      conditions.push("c.company_name = @supplierId");
-    }
-
-    if (branchId !== undefined && branchId !== "") {
-      if (!isValidPositiveInteger(branchId)) {
-        return res.status(400).json({
-          message: "Invalid branch ID",
-        });
-      }
-
-      request.input(
-        "branchId",
-        sql.NVarChar(255),
-        String(Number(branchId)),
-      );
-
-      conditions.push("c.branch = @branchId");
+    if (
+      !/^\d+$/.test(String(req.query.page ?? "1")) ||
+      !Number.isSafeInteger(requestedPage) ||
+      requestedPage < 1 ||
+      requestedPage > 2147483647
+    ) {
+      return res.status(400).json({
+        message: "Invalid page number",
+      });
     }
 
     if (
-      advertisingCompanyId !== undefined &&
-      advertisingCompanyId !== ""
+      !/^\d+$/.test(String(req.query.limit ?? "50")) ||
+      !allowedLimits.includes(limit)
     ) {
-      if (!isValidPositiveInteger(advertisingCompanyId)) {
-        return res.status(400).json({
-          message: "Invalid advertising company ID",
-        });
-      }
-
-      request.input(
-        "advertisingCompanyId",
-        sql.Int,
-        Number(advertisingCompanyId),
-      );
-
-      conditions.push(
-        "c.advertising_company_id = @advertisingCompanyId",
-      );
+      return res.status(400).json({
+        message: "Invalid page limit. Allowed values: 25, 50, 100",
+      });
     }
 
-    let query = `
+    const conditions = [];
+
+    // Build the same filters for both COUNT and paginated queries.
+    const bindFilters = (request) => {
+      if (code !== undefined && code !== "") {
+        if (!isValidPositiveInteger(code)) {
+          throw Object.assign(new Error("Invalid coordinator code"), {
+            status: 400,
+          });
+        }
+
+        request.input("code", sql.Int, Number(code));
+        conditions.push("c.code = @code");
+      }
+
+      if (typeof job === "string" && job.trim()) {
+        request.input("job", sql.NVarChar(255), job.trim());
+        conditions.push("LTRIM(RTRIM(c.job)) = @job");
+      }
+
+      if (filter === "expired") {
+        conditions.push(`
+          (
+            LTRIM(RTRIM(c.states)) = N'غير مفعل'
+            OR c.health_certificate_expiry_date < CAST(GETDATE() AS DATE)
+          )
+        `);
+      }
+
+      if (supplierId !== undefined && supplierId !== "") {
+        if (!isValidPositiveInteger(supplierId)) {
+          throw Object.assign(new Error("Invalid supplier ID"), {
+            status: 400,
+          });
+        }
+
+        request.input(
+          "supplierId",
+          sql.NVarChar(255),
+          String(Number(supplierId)),
+        );
+
+        conditions.push("c.company_name = @supplierId");
+      }
+
+      if (branchId !== undefined && branchId !== "") {
+        if (!isValidPositiveInteger(branchId)) {
+          throw Object.assign(new Error("Invalid branch ID"), {
+            status: 400,
+          });
+        }
+
+        request.input(
+          "branchId",
+          sql.NVarChar(255),
+          String(Number(branchId)),
+        );
+
+        conditions.push("c.branch = @branchId");
+      }
+
+      if (
+        advertisingCompanyId !== undefined &&
+        advertisingCompanyId !== ""
+      ) {
+        if (!isValidPositiveInteger(advertisingCompanyId)) {
+          throw Object.assign(
+            new Error("Invalid advertising company ID"),
+            { status: 400 },
+          );
+        }
+
+        request.input(
+          "advertisingCompanyId",
+          sql.Int,
+          Number(advertisingCompanyId),
+        );
+
+        conditions.push(
+          "c.advertising_company_id = @advertisingCompanyId",
+        );
+      }
+
+      // General search across coordinator and related names.
+      if (typeof search === "string" && search.trim()) {
+        request.input(
+          "search",
+          sql.NVarChar(500),
+          `%${search.trim()}%`,
+        );
+
+        conditions.push(`
+          (
+            CONVERT(NVARCHAR(50), c.code) LIKE @search
+            OR c.name LIKE @search
+            OR c.job LIKE @search
+            OR c.mobile LIKE @search
+            OR c.company_name LIKE @search
+            OR c.governorate LIKE @search
+            OR c.national_id_number LIKE @search
+            OR c.branch LIKE @search
+
+            OR EXISTS (
+              SELECT 1
+              FROM dbo.sys_supplier AS s
+              WHERE CONVERT(NVARCHAR(50), s.supplierno) =
+                    LTRIM(RTRIM(c.company_name))
+                AND s.a_name LIKE @search
+            )
+
+            OR EXISTS (
+              SELECT 1
+              FROM dbo.sys_branch AS b
+              WHERE CONVERT(NVARCHAR(50), b.branch) =
+                    LTRIM(RTRIM(c.branch))
+                AND b.a_name LIKE @search
+            )
+
+            OR EXISTS (
+              SELECT 1
+              FROM dbo.advertising_companies AS ac_search
+              WHERE ac_search.id = c.advertising_company_id
+                AND ac_search.isdeleted = 0
+                AND ac_search.name LIKE @search
+            )
+          )
+        `);
+      }
+
+      // Supplier name filter.
+      if (
+        typeof supplierSearch === "string" &&
+        supplierSearch.trim()
+      ) {
+        request.input(
+          "supplierSearch",
+          sql.NVarChar(500),
+          `%${supplierSearch.trim()}%`,
+        );
+
+        conditions.push(`
+          (
+            c.company_name LIKE @supplierSearch
+
+            OR EXISTS (
+              SELECT 1
+              FROM dbo.sys_supplier AS s
+              WHERE CONVERT(NVARCHAR(50), s.supplierno) =
+                    LTRIM(RTRIM(c.company_name))
+                AND s.a_name LIKE @supplierSearch
+            )
+          )
+        `);
+      }
+
+      // Branch name filter.
+      if (
+        typeof branchSearch === "string" &&
+        branchSearch.trim()
+      ) {
+        request.input(
+          "branchSearch",
+          sql.NVarChar(500),
+          `%${branchSearch.trim()}%`,
+        );
+
+        conditions.push(`
+          (
+            c.branch LIKE @branchSearch
+
+            OR EXISTS (
+              SELECT 1
+              FROM dbo.sys_branch AS b
+              WHERE CONVERT(NVARCHAR(50), b.branch) =
+                    LTRIM(RTRIM(c.branch))
+                AND b.a_name LIKE @branchSearch
+            )
+          )
+        `);
+      }
+    };
+
+    const pool = await retailPoolPromise;
+
+    if (!pool) {
+      throw new Error("Retail database unavailable");
+    }
+
+    // ---------------------------------------------------------------
+    // 1. Get total number of unique coordinators.
+    // No exception join here, so coordinators are not counted twice.
+    // ---------------------------------------------------------------
+
+    const countRequest = pool.request();
+
+    bindFilters(countRequest);
+
+    const whereClause = conditions.length
+      ? `WHERE ${conditions.join(" AND ")}`
+      : "";
+
+    const countResult = await countRequest.query(`
+      SELECT COUNT_BIG(1) AS totalRecords
+      FROM dbo.coordinator AS c
+      ${whereClause};
+    `);
+
+    const totalRecords = Number(
+      countResult.recordset[0]?.totalRecords ?? 0,
+    );
+
+    const totalPages = Math.ceil(totalRecords / limit);
+
+    // Keep the requested page inside the available range.
+    const currentPage =
+      totalPages === 0
+        ? 1
+        : Math.min(requestedPage, totalPages);
+
+    const offset = (currentPage - 1) * limit;
+
+    // ---------------------------------------------------------------
+    // 2. Get one page of coordinator IDs first.
+    // Then join exceptions and other details for those coordinators.
+    // ---------------------------------------------------------------
+
+    const dataRequest = pool.request();
+
+    bindFilters(dataRequest);
+
+    dataRequest.input("offset", sql.BigInt, offset);
+    dataRequest.input("limit", sql.Int, limit);
+
+    const result = await dataRequest.query(`
+      ;WITH PagedCoordinators AS (
+        SELECT c.id
+        FROM dbo.coordinator AS c
+        ${whereClause}
+        ORDER BY c.id
+        OFFSET @offset ROWS
+        FETCH NEXT @limit ROWS ONLY
+      )
+
       SELECT
         c.*,
         ac.name AS joined_advertising_company_name,
@@ -255,7 +444,10 @@ getAllCoordinators: async (req, res) => {
         e.exception_start_date,
         e.exception_end_date
 
-      FROM dbo.coordinator AS c
+      FROM PagedCoordinators AS p
+
+      INNER JOIN dbo.coordinator AS c
+        ON c.id = p.id
 
       LEFT JOIN dbo.advertising_companies AS ac
         ON ac.id = c.advertising_company_id
@@ -291,16 +483,11 @@ getAllCoordinators: async (req, res) => {
       LEFT JOIN dbo.[exception] AS e
         ON e.coordinator_id = c.id
         AND e.isdeleted = 0
-    `;
 
-    if (conditions.length) {
-      query += ` WHERE ${conditions.join(" AND ")}`;
-    }
+      ORDER BY c.id, e.exception_id;
+    `);
 
-    query += " ORDER BY c.id;";
-
-    const result = await request.query(query);
-
+    // Resolve supplier and branch names.
     const coordinators = await getRetailNames(result.recordset);
 
     const finalCoordinators = coordinators.map((item) => {
@@ -313,25 +500,32 @@ getAllCoordinators: async (req, res) => {
         ...coordinator,
         advertising_company_name:
           joined_advertising_company_name ?? null,
-
-        security_notes:
-          coordinator.security_notes ?? null,
+        security_notes: coordinator.security_notes ?? null,
       };
     });
 
     return res.status(200).json({
       message: "Get coordinators successful",
       coordinators: finalCoordinators,
+      pagination: {
+        currentPage,
+        limit,
+        totalRecords,
+        totalPages,
+        hasPreviousPage: currentPage > 1,
+        hasNextPage: currentPage < totalPages,
+      },
     });
   } catch (error) {
     console.error("Get all coordinators error:", error);
 
-    return res.status(500).json({
+    return res.status(error.status || 500).json({
       message: "Get coordinators failed",
       error: error.message,
     });
   }
 },
+
 
 
   /* ---------------------------------------------------------------------- */
