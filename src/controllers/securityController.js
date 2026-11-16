@@ -298,7 +298,7 @@ function bindIncident(request, body) {
   request.input(
     "incidentNotes",
     sql.NVarChar(sql.MAX),
-    clean(body.incident_notes) || clean(body.notes),
+clean(body.incident_notes)
   );
 }
 
@@ -322,7 +322,7 @@ function bindPermit(request, body) {
   request.input(
     "permitNotes",
     sql.NVarChar(sql.MAX),
-    clean(body.permit_notes) || clean(body.notes),
+clean(body.permit_notes)
   );
 }
 
@@ -1259,12 +1259,7 @@ export async function getSecurityRecords(req, res) {
           per.permit_branch,
           per.permit_notes,
 
-          CONCAT_WS(
-            NCHAR(13) + NCHAR(10),
-            NULLIF(LTRIM(RTRIM(p.notes)), N''),
-            NULLIF(inc.incident_notes, N''),
-            NULLIF(per.permit_notes, N'')
-          ) AS notes,
+NULLIF(LTRIM(RTRIM(p.notes)), N'') AS notes,
 
           CASE
             WHEN inc.latest_incident_date IS NULL
@@ -1489,11 +1484,10 @@ export async function getSecurityRecords(req, res) {
         *,
         COUNT(*) OVER() AS total_count
       FROM FilteredRecords
-      ORDER BY
-        record_date DESC,
-        person_id DESC
-      OFFSET @offset ROWS
-      FETCH NEXT @limit ROWS ONLY;
+ORDER BY
+  person_id DESC
+OFFSET @offset ROWS
+FETCH NEXT @limit ROWS ONLY;
     `);
 
     const records = (result.recordset || []).map((item) => {
