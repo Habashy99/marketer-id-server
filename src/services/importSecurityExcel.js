@@ -8,19 +8,12 @@ import { retailPoolPromise, sql } from "../config/db.js";
 /* -------------------------------------------------------------------------- */
 
 const EXCEL_PATH =
-  process.env.SECURITY_INCIDENTS_EXCEL_PATH || "D:/security2.xlsx";
+  process.env.SECURITY_PERMITS_EXCEL_PATH || "D:/مندوبين.xlsx";
 
-const EXCEL_PASSWORD =
-  process.env.SECURITY_INCIDENTS_EXCEL_PASSWORD || undefined;
-
-const SHEET_NAME = "Chart1";
-
-// أرقام السجلات المطلوبة من ملف Excel
-const FIRST_RECORD_NUMBER = 33599;
-const LAST_RECORD_NUMBER = 33632;
-
-const EXPECTED_RECORDS_COUNT =
-  LAST_RECORD_NUMBER - FIRST_RECORD_NUMBER + 1;
+const EXCEL_PASSWORD = undefined;
+const PREFERRED_SHEET_NAME = "Chart1";
+const REQUEST_TIMEOUT = 120000;
+const LOG_EVERY = 100;
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -30,14 +23,15 @@ function cleanText(value) {
   if (value === null || value === undefined) return null;
 
   if (value instanceof Date) {
-    return value.toISOString().slice(0, 10);
+    return Number.isNaN(value.getTime())
+      ? null
+      : value.toISOString().slice(0, 10);
   }
 
   if (typeof value === "object") return null;
 
-  const text = String(value).trim();
-
-  return text.length ? text : null;
+  const text = String(value).replace(/\u00a0/g, " ").trim();
+  return text || null;
 }
 
 function normalizeArabicDigits(value) {
@@ -49,6 +43,36 @@ function normalizeArabicDigits(value) {
     .replace(/[۰-۹]/g, (d) => persianDigits.indexOf(d));
 }
 
+function expandScientificNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Number.isInteger(value) ? value.toFixed(0) : String(value);
+  }
+
+  const text = String(value ?? "").trim();
+
+  if (/^\d+(\.\d+)?e[+-]?\d+$/i.test(text)) {
+    const number = Number(text);
+
+    if (Number.isFinite(number)) {
+      return number.toFixed(0);
+    }
+  }
+
+  return text;
+}
+
+function normalizeNationalId(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const text = normalizeArabicDigits(expandScientificNumber(value))
+    .replace(/\s/g, "")
+    .trim();
+
+  return /^\d{14}$/.test(text) ? text : null;
+}
+
 function normalizeDate(value) {
   if (value === null || value === undefined || value === "") {
     return null;
@@ -58,20 +82,21 @@ function normalizeDate(value) {
     return value.toISOString().slice(0, 10);
   }
 
-  // Excel serial date
   if (typeof value === "number" && Number.isFinite(value)) {
     const date = new Date(
       Date.UTC(1899, 11, 30) + value * 86400000
     );
 
-    return date.toISOString().slice(0, 10);
+    return Number.isNaN(date.getTime())
+      ? null
+      : date.toISOString().slice(0, 10);
   }
 
-  const text = normalizeArabicDigits(value).trim();
+  const text = normalizeArabicDigits(String(value)).trim();
 
   if (!text) return null;
 
-  // dd/mm/yyyy or dd-mm-yyyy
+  // dd/mm/yyyy أو dd-mm-yyyy
   const dmy = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
 
   if (dmy) {
@@ -93,7 +118,7 @@ function normalizeDate(value) {
   }
 
   // yyyy-mm-dd
-  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
 
   if (iso) {
     const year = Number(iso[1]);
@@ -116,286 +141,274 @@ function normalizeDate(value) {
   return null;
 }
 
-function normalizeNationalId(value) {
-  const text = normalizeArabicDigits(value || "")
-    .replace(/\s/g, "")
-    .trim();
-
-  return /^\d{14}$/.test(text) ? text : null;
+function toSqlDate(value) {
+  return value ? new Date(`${value}T00:00:00.000Z`) : null;
 }
 
-function normalizeMoney(value) {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
-
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : null;
-  }
-
-  const text = normalizeArabicDigits(value)
-    .replace(/٬/g, "")
-    .replace(/٫/g, ".")
-    .replace(/,/g, "")
-    .replace(/[^\d.-]/g, "");
-
-  if (!text || text === "-" || text === ".") return null;
-
-  const number = Number(text);
-
-  return Number.isFinite(number) ? number : null;
+function combineNotes(...values) {
+  const cleaned = values.map(cleanText).filter(Boolean);
+  return cleaned.length ? cleaned.join("\n\n") : null;
 }
 
-function combineNotes(first, second) {
-  const values = [cleanText(first), cleanText(second)].filter(Boolean);
-
-  return values.length ? values.join("\n\n") : null;
-}
+/* -------------------------------------------------------------------------- */
+/* Excel mapping                                                              */
+/* -------------------------------------------------------------------------- */
 
 function mapExcelRow(row, excelRowNumber) {
+  const rawNationalId =
+    row[4] === null || row[4] === undefined
+      ? null
+      : expandScientificNumber(row[4]);
+
   return {
     sourceRecordNumber: cleanText(row[0]),
     name: cleanText(row[1]),
-    birthPlace: cleanText(row[2]),
-    birthDate: normalizeDate(row[3]),
+    birthDate: normalizeDate(row[2]),
+    extraData: cleanText(row[3]),
 
-    // لو الخانة تحتوي على "تحت السن" ستكون القيمة null.
-    // لا نستخرج رقم الضامن من العنوان.
-    nationalId: normalizeNationalId(row[4]),
+    rawNationalId,
+    nationalId: normalizeNationalId(rawNationalId),
 
-    branch: cleanText(row[5]),
-    notes: combineNotes(row[6], row[10]),
-    stolenGoods: cleanText(row[7]),
-    stolenGoodsValue: normalizeMoney(row[8]),
-    incidentDate: normalizeDate(row[9]),
+    companyName: cleanText(row[5]),
+    incidentDate: normalizeDate(row[6]),
+    branch: cleanText(row[7]),
+
+    stolenGoods: cleanText(row[8]),
+
+    notes: combineNotes(
+      row[9],
+      row[3],
+      row[0] ? `رقم السجل الأصلي: ${cleanText(row[0])}` : null
+    ),
+
     excelRowNumber,
   };
 }
 
 /* -------------------------------------------------------------------------- */
-/* Person matching / insertion                                                */
+/* One SQL operation per Excel row                                            */
 /* -------------------------------------------------------------------------- */
 
-async function findOrCreatePerson(transaction, record) {
-  if (!record.name) {
-    throw new Error(
-      `الاسم فارغ في صف Excel رقم ${record.excelRowNumber}`
-    );
-  }
+async function importOneRecord(pool, record) {
+  const request = pool.request();
 
-  // 1. Match by national ID
-  if (record.nationalId) {
-    const request = new sql.Request(transaction);
+  // رفع مهلة تنفيذ هذا الطلب
+  request.timeout = REQUEST_TIMEOUT;
 
-    request.input(
-      "nationalId",
-      sql.NVarChar(100),
-      record.nationalId
-    );
-
-    const result = await request.query(`
-      SELECT TOP (2) id
-      FROM dbo.security_persons WITH (UPDLOCK, HOLDLOCK)
-      WHERE national_id_number = @nationalId
-        AND ISNULL(is_deleted, 0) = 0
-      ORDER BY id;
-    `);
-
-    if (result.recordset.length > 1) {
-      throw new Error(
-        `الرقم القومي ${record.nationalId} مرتبط بأكثر من شخص.`
-      );
-    }
-
-    if (result.recordset.length === 1) {
-      return {
-        id: result.recordset[0].id,
-        created: false,
-      };
-    }
-  } else {
-    // 2. Fallback only when the combination is unambiguous
-    const request = new sql.Request(transaction);
-
-    request.input("name", sql.NVarChar(510), record.name);
-    request.input("birthPlace", sql.NVarChar(300), record.birthPlace);
-    request.input(
-      "birthDate",
-      sql.Date,
-      record.birthDate
-        ? new Date(`${record.birthDate}T00:00:00Z`)
-        : null
-    );
-
-    const result = await request.query(`
-      SELECT TOP (2) id
-      FROM dbo.security_persons WITH (UPDLOCK, HOLDLOCK)
-      WHERE name = @name
-        AND (
-          birth_place = @birthPlace
-          OR (birth_place IS NULL AND @birthPlace IS NULL)
-        )
-        AND (
-          birth_date = @birthDate
-          OR (birth_date IS NULL AND @birthDate IS NULL)
-        )
-        AND ISNULL(is_deleted, 0) = 0
-      ORDER BY id;
-    `);
-
-    if (result.recordset.length > 1) {
-      throw new Error(
-        `لا يوجد رقم قومي صالح، والاسم "${record.name}" يطابق أكثر من شخص.`
-      );
-    }
-
-    if (result.recordset.length === 1) {
-      return {
-        id: result.recordset[0].id,
-        created: false,
-      };
-    }
-  }
-
-  // 3. Create a new person
-  const insertRequest = new sql.Request(transaction);
-
-  insertRequest.input("name", sql.NVarChar(510), record.name);
-  insertRequest.input(
+  request.input("name", sql.NVarChar(510), record.name);
+  request.input(
     "nationalId",
     sql.NVarChar(100),
     record.nationalId
   );
-  insertRequest.input(
-    "birthPlace",
-    sql.NVarChar(300),
-    record.birthPlace
+  request.input(
+    "rawNationalId",
+    sql.NVarChar(100),
+    record.rawNationalId
   );
-  insertRequest.input(
+  request.input(
     "birthDate",
     sql.Date,
-    record.birthDate
-      ? new Date(`${record.birthDate}T00:00:00Z`)
-      : null
+    toSqlDate(record.birthDate)
   );
-
-  const inserted = await insertRequest.query(`
-    INSERT INTO dbo.security_persons
-    (
-      name,
-      national_id_number,
-      birth_date,
-      birth_place,
-      security_situation,
-      created_at,
-      is_deleted
-    )
-    OUTPUT INSERTED.id
-    VALUES
-    (
-      @name,
-      @nationalId,
-      @birthDate,
-      @birthPlace,
-      N'غير محدد',
-      SYSDATETIME(),
-      0
-    );
-  `);
-
-  return {
-    id: inserted.recordset[0].id,
-    created: true,
-  };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Incident insertion                                                         */
-/* -------------------------------------------------------------------------- */
-
-async function insertIncident(transaction, personId, record) {
-  const request = new sql.Request(transaction);
-
-  request.input("personId", sql.Int, personId);
-  request.input("branch", sql.NVarChar(510), record.branch);
+  request.input(
+    "companyName",
+    sql.NVarChar(510),
+    record.companyName
+  );
+  request.input(
+    "branch",
+    sql.NVarChar(510),
+    record.branch
+  );
   request.input(
     "stolenGoods",
     sql.NVarChar(sql.MAX),
     record.stolenGoods
   );
   request.input(
-    "stolenGoodsValue",
-    sql.Decimal(28, 4),
-    record.stolenGoodsValue
-  );
-  request.input(
     "incidentDate",
     sql.Date,
-    record.incidentDate
-      ? new Date(`${record.incidentDate}T00:00:00Z`)
-      : null
+    toSqlDate(record.incidentDate)
   );
-  request.input("notes", sql.NVarChar(sql.MAX), record.notes);
+  request.input(
+    "notes",
+    sql.NVarChar(sql.MAX),
+    record.notes
+  );
+  request.input(
+    "fallbackName",
+    sql.NVarChar(510),
+    record.name || `بدون اسم - صف Excel ${record.excelRowNumber}`
+  );
 
-  // Avoid importing an identical incident twice
-  const duplicate = await request.query(`
-    SELECT TOP (1) id
-    FROM dbo.security_incidents WITH (UPDLOCK, HOLDLOCK)
-    WHERE security_person_id = @personId
-      AND (branch = @branch OR (branch IS NULL AND @branch IS NULL))
-      AND (
-        stolen_goods = @stolenGoods
-        OR (stolen_goods IS NULL AND @stolenGoods IS NULL)
-      )
-      AND (
-        stolen_goods_value = @stolenGoodsValue
-        OR (
-          stolen_goods_value IS NULL
-          AND @stolenGoodsValue IS NULL
+  const result = await request.query(`
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @personId INT;
+    DECLARE @personCreated BIT = 0;
+    DECLARE @incidentId INT;
+    DECLARE @incidentInserted BIT = 0;
+
+    BEGIN TRY
+      BEGIN TRANSACTION;
+
+      /* -------------------------------------------------------------- */
+      /* Find existing person                                            */
+      /* -------------------------------------------------------------- */
+
+      IF @nationalId IS NOT NULL
+      BEGIN
+        SELECT TOP (1)
+          @personId = id
+        FROM dbo.security_persons
+        WHERE national_id_number = @nationalId
+        ORDER BY id;
+      END
+      ELSE
+      BEGIN
+        IF @name IS NOT NULL AND @birthDate IS NOT NULL
+        BEGIN
+          SELECT TOP (1)
+            @personId = id
+          FROM dbo.security_persons
+          WHERE name = @name
+            AND birth_date = @birthDate
+          ORDER BY id;
+        END
+        ELSE IF @name IS NOT NULL
+        BEGIN
+          SELECT TOP (1)
+            @personId = id
+          FROM dbo.security_persons
+          WHERE name = @name
+          ORDER BY id;
+        END
+      END;
+
+      /* -------------------------------------------------------------- */
+      /* Insert person if not found                                      */
+      /* -------------------------------------------------------------- */
+
+      IF @personId IS NULL
+      BEGIN
+        INSERT INTO dbo.security_persons
+        (
+          name,
+          national_id_number,
+          birth_date,
+          security_situation,
+          company_display_name,
+          job,
+          notes,
+          created_at,
+          is_deleted
         )
-      )
-      AND (
-        incident_date = @incidentDate
-        OR (incident_date IS NULL AND @incidentDate IS NULL)
-      )
-      AND (
-        notes = @notes
-        OR (notes IS NULL AND @notes IS NULL)
-      );
+        VALUES
+        (
+          @fallbackName,
+          @rawNationalId,
+          @birthDate,
+          N'غير محدد',
+          @companyName,
+          N'مندوب',
+          @notes,
+          SYSDATETIME(),
+          0
+        );
+
+        SET @personId = CONVERT(INT, SCOPE_IDENTITY());
+        SET @personCreated = 1;
+      END;
+
+      /* -------------------------------------------------------------- */
+      /* Check duplicate incident                                        */
+      /* -------------------------------------------------------------- */
+
+      SELECT TOP (1)
+        @incidentId = id
+      FROM dbo.security_incidents
+      WHERE security_person_id = @personId
+        AND (
+          branch = @branch
+          OR (branch IS NULL AND @branch IS NULL)
+        )
+        AND (
+          stolen_goods = @stolenGoods
+          OR (stolen_goods IS NULL AND @stolenGoods IS NULL)
+        )
+        AND (
+          incident_date = @incidentDate
+          OR (incident_date IS NULL AND @incidentDate IS NULL)
+        )
+        AND (
+          notes = @notes
+          OR (notes IS NULL AND @notes IS NULL)
+        )
+      ORDER BY id;
+
+      /* -------------------------------------------------------------- */
+      /* Insert incident if not found                                    */
+      /* -------------------------------------------------------------- */
+
+      IF @incidentId IS NULL
+      BEGIN
+        INSERT INTO dbo.security_incidents
+        (
+          security_person_id,
+          branch,
+          stolen_goods,
+          stolen_goods_value,
+          incident_date,
+          notes
+        )
+        VALUES
+        (
+          @personId,
+          @branch,
+          @stolenGoods,
+          NULL,
+          @incidentDate,
+          @notes
+        );
+
+        SET @incidentId = CONVERT(INT, SCOPE_IDENTITY());
+        SET @incidentInserted = 1;
+      END;
+
+      COMMIT TRANSACTION;
+
+      SELECT
+        @personId AS personId,
+        @personCreated AS personCreated,
+        @incidentId AS incidentId,
+        @incidentInserted AS incidentInserted;
+
+    END TRY
+    BEGIN CATCH
+
+      IF XACT_STATE() <> 0
+      BEGIN
+        ROLLBACK TRANSACTION;
+      END;
+
+      THROW;
+
+    END CATCH;
   `);
 
-  if (duplicate.recordset.length) {
-    return {
-      inserted: false,
-      incidentId: duplicate.recordset[0].id,
-    };
+  if (!result.recordset?.length) {
+    throw new Error("SQL لم يرجع نتيجة تسجيل الشخص والواقعة.");
   }
 
-  const inserted = await request.query(`
-    INSERT INTO dbo.security_incidents
-    (
-      security_person_id,
-      branch,
-      stolen_goods,
-      stolen_goods_value,
-      incident_date,
-      notes
-    )
-    OUTPUT INSERTED.id
-    VALUES
-    (
-      @personId,
-      @branch,
-      @stolenGoods,
-      @stolenGoodsValue,
-      @incidentDate,
-      @notes
-    );
-  `);
+  const row = result.recordset[0];
 
   return {
-    inserted: true,
-    incidentId: inserted.recordset[0].id,
+    personId: row.personId,
+    personCreated: Boolean(row.personCreated),
+    incidentId: row.incidentId,
+    incidentInserted: Boolean(row.incidentInserted),
   };
 }
 
@@ -405,34 +418,40 @@ async function insertIncident(transaction, personId, record) {
 
 async function importSecurityExcel() {
   console.log("======================================");
-  console.log("SECURITY INCIDENTS - SELECTED RECORDS");
+  console.log("SECURITY PERMITS / MANDOBIN IMPORT");
   console.log("======================================");
 
   console.log("Excel:", EXCEL_PATH);
-  console.log("Sheet:", SHEET_NAME);
-  console.log(
-    "Source records:",
-    `${FIRST_RECORD_NUMBER} - ${LAST_RECORD_NUMBER}`
-  );
 
   const workbook = await XlsxPopulate.fromFileAsync(EXCEL_PATH, {
     password: EXCEL_PASSWORD,
   });
 
-  const sheet = workbook.sheet(SHEET_NAME);
+  const sheets = workbook.sheets();
 
-  if (!sheet) {
-    throw new Error(`الشيت ${SHEET_NAME} غير موجود في ملف Excel.`);
+  if (!sheets.length) {
+    throw new Error("ملف Excel لا يحتوي على أي شيت.");
   }
 
-  const values = sheet.usedRange().value();
+  const sheet =
+    workbook.sheet(PREFERRED_SHEET_NAME) || sheets[0];
+
+  console.log("Available sheets:", sheets.map((s) => s.name()));
+  console.log("Selected sheet:", sheet.name());
+
+  const usedRange = sheet.usedRange();
+
+  if (!usedRange) {
+    throw new Error("الشيت المختار فارغ.");
+  }
+
+  const values = usedRange.value();
 
   if (!Array.isArray(values) || values.length < 2) {
     throw new Error("الشيت لا يحتوي على بيانات كافية.");
   }
 
-  // First row is the header.
-  const dataRows = values
+  const records = values
     .slice(1)
     .map((row, index) => ({
       row,
@@ -441,137 +460,92 @@ async function importSecurityExcel() {
     .filter(({ row }) =>
       Array.isArray(row) &&
       row.some((value) => cleanText(value) !== null)
-    );
-
-  // Select exactly source records 33599 through 33632.
-  const records = dataRows
+    )
     .map(({ row, excelRowNumber }) =>
       mapExcelRow(row, excelRowNumber)
-    )
-    .filter((record) => {
-      const sourceNumber = Number(record.sourceRecordNumber);
-
-      return (
-        Number.isInteger(sourceNumber) &&
-        sourceNumber >= FIRST_RECORD_NUMBER &&
-        sourceNumber <= LAST_RECORD_NUMBER
-      );
-    })
-    .sort(
-      (a, b) =>
-        Number(a.sourceRecordNumber) -
-        Number(b.sourceRecordNumber)
     );
 
-  console.log("Total data rows in Excel:", dataRows.length);
-  console.log("Selected records:", records.length);
-
-  // Safety check: stop if all 34 records are not found.
-  if (records.length !== EXPECTED_RECORDS_COUNT) {
-    const foundNumbers = new Set(
-      records.map((record) => Number(record.sourceRecordNumber))
-    );
-
-    const missingNumbers = [];
-
-    for (
-      let number = FIRST_RECORD_NUMBER;
-      number <= LAST_RECORD_NUMBER;
-      number++
-    ) {
-      if (!foundNumbers.has(number)) {
-        missingNumbers.push(number);
-      }
-    }
-
-    throw new Error(
-      `المتوقع ${EXPECTED_RECORDS_COUNT} سجل، لكن تم العثور على ${records.length} فقط. ` +
-      `السجلات غير الموجودة: ${missingNumbers.join(", ")}. ` +
-      "تم إيقاف الاستيراد ولم يتم إدخال أي بيانات."
-    );
-  }
-
+  console.log("Total rows found:", records.length);
   console.log("--------------------------------------");
 
-  for (const record of records) {
-    console.log(
-      `Source: ${record.sourceRecordNumber} | ` +
-      `Excel row: ${record.excelRowNumber} | ` +
-      `Name: ${record.name || "NO NAME"} | ` +
-      `National ID: ${record.nationalId || "تحت السن / غير متوفر"}`
-    );
-  }
-
-  // Validate names before starting the transaction.
-  const invalidRecords = records.filter((record) => !record.name);
-
-  if (invalidRecords.length) {
-    throw new Error(
-      `يوجد ${invalidRecords.length} سجل بدون اسم. تم إيقاف الاستيراد.`
-    );
-  }
-
   const pool = await retailPoolPromise;
-  const transaction = new sql.Transaction(pool);
 
   let insertedPeople = 0;
   let existingPeople = 0;
   let insertedIncidents = 0;
   let skippedIncidents = 0;
+  let failedRows = 0;
 
-  try {
-    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  const errors = [];
 
-    for (const record of records) {
-      console.log("--------------------------------------");
-      console.log(
-        `Processing source record ${record.sourceRecordNumber}: ${record.name}`
-      );
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index];
 
-      const person = await findOrCreatePerson(transaction, record);
+    try {
+      const result = await importOneRecord(pool, record);
 
-      if (person.created) {
+      if (result.personCreated) {
         insertedPeople++;
       } else {
         existingPeople++;
       }
 
-      const incident = await insertIncident(
-        transaction,
-        person.id,
-        record
-      );
-
-      if (incident.inserted) {
+      if (result.incidentInserted) {
         insertedIncidents++;
       } else {
         skippedIncidents++;
       }
 
-      console.log(
-        `Person ID: ${person.id} | ` +
-        `Person: ${person.created ? "CREATED" : "EXISTING"} | ` +
-        `Incident ID: ${incident.incidentId} | ` +
-        `${incident.inserted ? "INSERTED" : "ALREADY EXISTS"}`
+      const completed = index + 1;
+
+      if (
+        completed === 1 ||
+        completed % LOG_EVERY === 0 ||
+        completed === records.length
+      ) {
+        console.log(
+          `Progress: ${completed}/${records.length} | ` +
+          `Row: ${record.excelRowNumber} | ` +
+          `Person: ${result.personCreated ? "CREATED" : "EXISTING"} | ` +
+          `Incident: ${result.incidentInserted ? "INSERTED" : "EXISTING"}`
+        );
+      }
+    } catch (error) {
+      failedRows++;
+
+      errors.push({
+        row: record.excelRowNumber,
+        name: record.name,
+        nationalId: record.rawNationalId,
+        error: error.message,
+      });
+
+      console.error(
+        `ERROR in Excel row ${record.excelRowNumber}:`,
+        error.message
       );
+
+      // نكمل الصف التالي دون محاولة Rollback من JavaScript.
     }
-
-    await transaction.commit();
-
-    console.log("\n======================================");
-    console.log("IMPORT COMPLETED SUCCESSFULLY");
-    console.log("======================================");
-    console.log("Source records:", `${FIRST_RECORD_NUMBER}-${LAST_RECORD_NUMBER}`);
-    console.log("Rows processed:", records.length);
-    console.log("New persons:", insertedPeople);
-    console.log("Existing persons:", existingPeople);
-    console.log("New incidents:", insertedIncidents);
-    console.log("Skipped duplicate incidents:", skippedIncidents);
-    console.log("======================================");
-  } catch (error) {
-    await transaction.rollback();
-    throw error;
   }
+
+  console.log("\n======================================");
+  console.log("IMPORT FINISHED");
+  console.log("======================================");
+
+  console.log("Total rows:", records.length);
+  console.log("New persons:", insertedPeople);
+  console.log("Existing persons:", existingPeople);
+  console.log("New incidents:", insertedIncidents);
+  console.log("Skipped duplicate incidents:", skippedIncidents);
+  console.log("Failed rows:", failedRows);
+
+  if (errors.length) {
+    console.log("\nFailed rows details:");
+    console.table(errors);
+  }
+
+  console.log("======================================");
 }
 
 /* -------------------------------------------------------------------------- */
@@ -580,7 +554,7 @@ async function importSecurityExcel() {
 
 importSecurityExcel()
   .then(() => {
-    console.log("Security Excel import finished.");
+    console.log("Mandobeen Excel import finished.");
   })
   .catch((error) => {
     console.error("IMPORT FAILED:", error);

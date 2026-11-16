@@ -151,130 +151,366 @@ const CoordinatorController = {
   /* GET ALL COORDINATORS                                                   */
   /* ---------------------------------------------------------------------- */
 
-  getAllCoordinators: async (req, res) => {
+
+getAllCoordinators: async (req, res) => {
+  try {
+    const {
+      job,
+      filter,
+      code,
+      supplierId,
+      branchId,
+      advertisingCompanyId,
+    } = req.query;
+
+    const pool = await retailPoolPromise;
+    const request = pool.request();
+    const conditions = [];
+
+    if (code !== undefined && code !== "") {
+      if (!isValidPositiveInteger(code)) {
+        return res.status(400).json({
+          message: "Invalid coordinator code",
+        });
+      }
+
+      request.input("code", sql.Int, Number(code));
+      conditions.push("c.code = @code");
+    }
+
+    if (typeof job === "string" && job.trim()) {
+      request.input("job", sql.NVarChar(255), job.trim());
+      conditions.push("LTRIM(RTRIM(c.job)) = @job");
+    }
+
+    if (filter === "expired") {
+      conditions.push(`
+        (
+          LTRIM(RTRIM(c.states)) = N'غير مفعل'
+          OR c.health_certificate_expiry_date < CAST(GETDATE() AS DATE)
+        )
+      `);
+    }
+
+    if (supplierId !== undefined && supplierId !== "") {
+      if (!isValidPositiveInteger(supplierId)) {
+        return res.status(400).json({
+          message: "Invalid supplier ID",
+        });
+      }
+
+      request.input(
+        "supplierId",
+        sql.NVarChar(255),
+        String(Number(supplierId)),
+      );
+
+      conditions.push("c.company_name = @supplierId");
+    }
+
+    if (branchId !== undefined && branchId !== "") {
+      if (!isValidPositiveInteger(branchId)) {
+        return res.status(400).json({
+          message: "Invalid branch ID",
+        });
+      }
+
+      request.input(
+        "branchId",
+        sql.NVarChar(255),
+        String(Number(branchId)),
+      );
+
+      conditions.push("c.branch = @branchId");
+    }
+
+    if (
+      advertisingCompanyId !== undefined &&
+      advertisingCompanyId !== ""
+    ) {
+      if (!isValidPositiveInteger(advertisingCompanyId)) {
+        return res.status(400).json({
+          message: "Invalid advertising company ID",
+        });
+      }
+
+      request.input(
+        "advertisingCompanyId",
+        sql.Int,
+        Number(advertisingCompanyId),
+      );
+
+      conditions.push(
+        "c.advertising_company_id = @advertisingCompanyId",
+      );
+    }
+
+    let query = `
+      SELECT
+        c.*,
+        ac.name AS joined_advertising_company_name,
+        security_notes.security_notes,
+        e.exception_id,
+        e.exception_name,
+        e.exception_start_date,
+        e.exception_end_date
+
+      FROM dbo.coordinator AS c
+
+      LEFT JOIN dbo.advertising_companies AS ac
+        ON ac.id = c.advertising_company_id
+        AND ac.isdeleted = 0
+
+      OUTER APPLY (
+        SELECT
+          STUFF(
+            (
+              SELECT
+                N' | ' + note_list.note
+
+              FROM (
+                SELECT DISTINCT
+                  LTRIM(RTRIM(sp.notes)) AS note
+
+                FROM dbo.security_persons AS sp
+
+                WHERE LTRIM(RTRIM(sp.national_id_number)) =
+                      LTRIM(RTRIM(c.national_id_number))
+
+                  AND NULLIF(LTRIM(RTRIM(sp.notes)), N'') IS NOT NULL
+              ) AS note_list
+
+              FOR XML PATH(''), TYPE
+            ).value('.', 'NVARCHAR(MAX)'),
+            1,
+            3,
+            N''
+          ) AS security_notes
+      ) AS security_notes
+
+      LEFT JOIN dbo.[exception] AS e
+        ON e.coordinator_id = c.id
+        AND e.isdeleted = 0
+    `;
+
+    if (conditions.length) {
+      query += ` WHERE ${conditions.join(" AND ")}`;
+    }
+
+    query += " ORDER BY c.id;";
+
+    const result = await request.query(query);
+
+    const coordinators = await getRetailNames(result.recordset);
+
+    const finalCoordinators = coordinators.map((item) => {
+      const {
+        joined_advertising_company_name,
+        ...coordinator
+      } = item;
+
+      return {
+        ...coordinator,
+        advertising_company_name:
+          joined_advertising_company_name ?? null,
+
+        security_notes:
+          coordinator.security_notes ?? null,
+      };
+    });
+
+    return res.status(200).json({
+      message: "Get coordinators successful",
+      coordinators: finalCoordinators,
+    });
+  } catch (error) {
+    console.error("Get all coordinators error:", error);
+
+    return res.status(500).json({
+      message: "Get coordinators failed",
+      error: error.message,
+    });
+  }
+},
+
+
+  /* ---------------------------------------------------------------------- */
+  /* GET COORDINATOR SECURITY DETAILS                                       */
+  /* ---------------------------------------------------------------------- */
+
+  getCoordinatorSecurityDetails: async (req, res) => {
     try {
-      const { job, filter, code, supplierId, branchId, advertisingCompanyId } =
-        req.query;
+      const { id } = req.params;
+
+      if (!isValidPositiveInteger(id)) {
+        return res.status(400).json({
+          message: "Invalid coordinator ID",
+        });
+      }
 
       const pool = await retailPoolPromise;
-      const request = pool.request();
-      const conditions = [];
 
-      if (code !== undefined && code !== "") {
-        if (!isValidPositiveInteger(code)) {
-          return res.status(400).json({
-            message: "Invalid coordinator code",
-          });
-        }
-
-        request.input("code", sql.Int, Number(code));
-        conditions.push("c.code = @code");
+      if (!pool) {
+        throw new Error("Retail database unavailable");
       }
 
-      if (typeof job === "string" && job.trim()) {
-        request.input("job", sql.NVarChar(255), job.trim());
-        conditions.push("LTRIM(RTRIM(c.job)) = @job");
+      // Get the coordinator's national ID.
+      const coordinatorResult = await pool
+        .request()
+        .input("id", sql.Int, Number(id)).query(`
+          SELECT
+            id,
+            name,
+            national_id_number
+          FROM dbo.coordinator
+          WHERE id = @id;
+        `);
+
+      if (!coordinatorResult.recordset.length) {
+        return res.status(404).json({
+          message: "Coordinator not found",
+        });
       }
 
-      if (filter === "expired") {
-        conditions.push(`
-                    (
-                        LTRIM(RTRIM(c.states)) = N'غير مفعل'
-                        OR c.health_certificate_expiry_date
-                            < CAST(GETDATE() AS DATE)
-                    )
-                `);
+      const coordinator = coordinatorResult.recordset[0];
+      const nationalId = String(coordinator.national_id_number ?? "").trim();
+
+      if (!nationalId) {
+        return res.status(200).json({
+          message: "Coordinator has no national ID",
+          securityDetails: {
+            nationalIdNumber: null,
+            securityPersons: [],
+          },
+        });
       }
 
-      if (supplierId !== undefined && supplierId !== "") {
-        if (!isValidPositiveInteger(supplierId)) {
-          return res.status(400).json({
-            message: "Invalid supplier ID",
-          });
-        }
+      // Find all security records matching this national ID.
+      const personsResult = await pool
+        .request()
+        .input("nationalId", sql.NVarChar(50), nationalId).query(`
+          SELECT
+            id,
+            name,
+            national_id_number,
+            job,
+            security_situation,
+            notes,
+            file_type,
+            branch,
+            branch_name,
+            is_deleted,
+            created_at,
+            updated_at
+          FROM dbo.security_persons
+          WHERE LTRIM(RTRIM(national_id_number)) = @nationalId
+          ORDER BY id DESC;
+        `);
 
-        request.input(
-          "supplierId",
-          sql.NVarChar(255),
-          String(Number(supplierId)),
-        );
+      const securityPersons = personsResult.recordset;
 
-        conditions.push("c.company_name = @supplierId");
+      if (!securityPersons.length) {
+        return res.status(200).json({
+          message: "No security record found",
+          securityDetails: {
+            nationalIdNumber: nationalId,
+            securityPersons: [],
+          },
+        });
       }
 
-      if (branchId !== undefined && branchId !== "") {
-        if (!isValidPositiveInteger(branchId)) {
-          return res.status(400).json({
-            message: "Invalid branch ID",
-          });
-        }
+      // Build parameterized ID list for the related records.
+      const personIds = [
+        ...new Set(
+          securityPersons
+            .map((person) => Number(person.id))
+            .filter(
+              (personId) => Number.isSafeInteger(personId) && personId > 0,
+            ),
+        ),
+      ];
 
-        request.input("branchId", sql.NVarChar(255), String(Number(branchId)));
+      const relatedRequest = pool.request();
 
-        conditions.push("c.branch = @branchId");
-      }
-
-      if (advertisingCompanyId !== undefined && advertisingCompanyId !== "") {
-        if (!isValidPositiveInteger(advertisingCompanyId)) {
-          return res.status(400).json({
-            message: "Invalid advertising company ID",
-          });
-        }
-
-        request.input(
-          "advertisingCompanyId",
-          sql.Int,
-          Number(advertisingCompanyId),
-        );
-
-        conditions.push("c.advertising_company_id = @advertisingCompanyId");
-      }
-
-      let query = `
-                SELECT
-                    c.*,
-                    ac.name AS joined_advertising_company_name,
-                    e.exception_id,
-                    e.exception_name,
-                    e.exception_start_date,
-                    e.exception_end_date
-                FROM dbo.coordinator AS c
-                LEFT JOIN dbo.advertising_companies AS ac
-                    ON ac.id = c.advertising_company_id
-                    AND ac.isdeleted = 0
-                LEFT JOIN dbo.[exception] AS e
-                    ON e.coordinator_id = c.id
-                    AND e.isdeleted = 0
-            `;
-
-      if (conditions.length) {
-        query += ` WHERE ${conditions.join(" AND ")}`;
-      }
-
-      query += " ORDER BY c.id;";
-
-      const result = await request.query(query);
-
-      const coordinators = await getRetailNames(result.recordset);
-
-      const finalCoordinators = coordinators.map((item) => {
-        const { joined_advertising_company_name, ...coordinator } = item;
-
-        return {
-          ...coordinator,
-          advertising_company_name: joined_advertising_company_name ?? null,
-        };
+      const idParameters = personIds.map((personId, index) => {
+        const parameter = `personId${index}`;
+        relatedRequest.input(parameter, sql.Int, personId);
+        return `@${parameter}`;
       });
+
+      const idsSql = idParameters.join(", ");
+
+      // Get all incidents for the matching security records.
+      const incidentsResult = await relatedRequest.query(`
+        SELECT
+          id,
+          security_person_id,
+          branch,
+          stolen_goods,
+          stolen_goods_value,
+          incident_date,
+          notes
+        FROM dbo.security_incidents
+        WHERE security_person_id IN (${idsSql})
+        ORDER BY incident_date DESC, id DESC;
+      `);
+
+      // Get all security status changes, including block reasons.
+      const historyResult = await relatedRequest.query(`
+        SELECT
+          id,
+          security_person_id,
+          old_status,
+          new_status,
+          reason,
+          changed_by,
+          changed_at
+        FROM dbo.security_status_history
+        WHERE security_person_id IN (${idsSql})
+        ORDER BY changed_at DESC, id DESC;
+      `);
+
+      const incidentsByPerson = new Map();
+      const historyByPerson = new Map();
+
+      for (const incident of incidentsResult.recordset) {
+        const personId = Number(incident.security_person_id);
+
+        if (!incidentsByPerson.has(personId)) {
+          incidentsByPerson.set(personId, []);
+        }
+
+        incidentsByPerson.get(personId).push(incident);
+      }
+
+      for (const history of historyResult.recordset) {
+        const personId = Number(history.security_person_id);
+
+        if (!historyByPerson.has(personId)) {
+          historyByPerson.set(personId, []);
+        }
+
+        historyByPerson.get(personId).push(history);
+      }
+
+      const result = securityPersons.map((person) => ({
+        ...person,
+        incidents: incidentsByPerson.get(Number(person.id)) ?? [],
+        statusHistory: historyByPerson.get(Number(person.id)) ?? [],
+      }));
 
       return res.status(200).json({
-        message: "Get coordinators successful",
-        coordinators: finalCoordinators,
+        message: "Security details retrieved successfully",
+        securityDetails: {
+          nationalIdNumber: nationalId,
+          securityPersons: result,
+        },
       });
     } catch (error) {
-      console.error("Get all coordinators error:", error);
+      console.error("Get coordinator security details error:", error);
 
       return res.status(500).json({
-        message: "Get coordinators failed",
+        message: "Failed to retrieve coordinator security details",
         error: error.message,
       });
     }
