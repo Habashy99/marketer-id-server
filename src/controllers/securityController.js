@@ -5,7 +5,14 @@ import { sql, retailPoolPromise } from "../config/db.js";
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
 
-const VALID_STATUSES = ["سليم", "تحت المراجعة", "مرفوض", "غير محدد", "بلوك"];
+const VALID_STATUSES = [
+  "سليم",
+  "تحت المراجعة",
+  "مرفوض",
+  "غير محدد",
+  "بلوك",
+];
+
 const VALID_JOBS = ["عميل", "مندوب", "مندوبة", "منسق", "منسقة"];
 
 const DEFAULT_PAGE_SIZE = 30;
@@ -85,7 +92,10 @@ function getSecurityStatusFromNotes(notes, fallback = "غير محدد") {
 }
 
 function getSecurityStatus(body) {
-  return getSecurityStatusFromNotes(body?.notes, body?.security_status);
+  return getSecurityStatusFromNotes(
+    body?.notes,
+    body?.security_status,
+  );
 }
 
 function getSourceLabel(sourceType) {
@@ -98,7 +108,10 @@ function sendServerError(res, error, action) {
   return res.status(500).json({
     success: false,
     message: `تعذر ${action}.`,
-    error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    error:
+      process.env.NODE_ENV === "development"
+        ? error.message
+        : undefined,
   });
 }
 
@@ -125,9 +138,13 @@ function normalizeCoordinator(row) {
     company_name: clean(row.company_name),
     national_id_number: clean(row.national_id_number),
     mobile: clean(row.mobile),
+
+    area: clean(row.area),
     governorate: clean(row.governorate),
+
     notes: clean(row.notes),
-    security_situation: clean(row.security_situation) || "غير محدد",
+    security_situation:
+      clean(row.security_situation) || "غير محدد",
 
     advertising_company_id:
       row.advertising_company_id == null
@@ -220,8 +237,10 @@ function validatePersonBody(body, nationalId) {
 function bindPerson(request, body) {
   const job = clean(body.job);
 
-  // العميل يكون نوع ملفه 25 دائمًا، سواء عند الإضافة أو التعديل.
-  const fileType = job === "عميل" ? "25" : clean(body.file_type);
+  // العميل يكون نوع ملفه 25 دائمًا.
+  const fileType = job === "عميل"
+    ? "25"
+    : clean(body.file_type);
 
   request.input("name", sql.NVarChar(255), clean(body.name));
 
@@ -231,7 +250,11 @@ function bindPerson(request, body) {
     clean(body.national_id_number),
   );
 
-  request.input("birthDate", sql.Date, parseDate(body.birth_date));
+  request.input(
+    "birthDate",
+    sql.Date,
+    parseDate(body.birth_date),
+  );
 
   request.input(
     "birthPlace",
@@ -240,7 +263,12 @@ function bindPerson(request, body) {
   );
 
   request.input("job", sql.NVarChar(100), job);
-  request.input("companyId", sql.NVarChar(100), clean(body.company_name));
+
+  request.input(
+    "companyId",
+    sql.NVarChar(100),
+    clean(body.company_name),
+  );
 
   request.input(
     "companyDisplayName",
@@ -262,14 +290,48 @@ function bindPerson(request, body) {
     clean(body.advertising_company_name),
   );
 
-  request.input("branch", sql.NVarChar(255), clean(body.branch));
-  request.input("branchName", sql.NVarChar(255), clean(body.branch_name));
-  request.input("governorate", sql.NVarChar(100), clean(body.governorate));
+  request.input(
+    "branch",
+    sql.NVarChar(255),
+    clean(body.branch),
+  );
 
-  request.input("fileType", sql.NVarChar(100), fileType);
+  request.input(
+    "branchName",
+    sql.NVarChar(255),
+    clean(body.branch_name),
+  );
 
-  request.input("securityStatus", sql.NVarChar(50), getSecurityStatus(body));
-  request.input("notes", sql.NVarChar(sql.MAX), clean(body.notes));
+  request.input(
+    "governorate",
+    sql.NVarChar(100),
+    clean(body.governorate),
+  );
+
+  // المنطقة محفوظة في security_persons.
+  request.input(
+    "area",
+    sql.NVarChar(150),
+    clean(body.area),
+  );
+
+  request.input(
+    "fileType",
+    sql.NVarChar(100),
+    fileType,
+  );
+
+  request.input(
+    "securityStatus",
+    sql.NVarChar(50),
+    getSecurityStatus(body),
+  );
+
+  request.input(
+    "notes",
+    sql.NVarChar(sql.MAX),
+    clean(body.notes),
+  );
 }
 
 function bindIncident(request, body) {
@@ -287,7 +349,11 @@ function bindIncident(request, body) {
     amount === null ? null : Number(amount),
   );
 
-  request.input("incidentDate", sql.Date, parseDate(body.incident_date));
+  request.input(
+    "incidentDate",
+    sql.Date,
+    parseDate(body.incident_date),
+  );
 
   request.input(
     "incidentBranch",
@@ -298,20 +364,29 @@ function bindIncident(request, body) {
   request.input(
     "incidentNotes",
     sql.NVarChar(sql.MAX),
-clean(body.incident_notes)
+    clean(body.incident_notes),
   );
 }
 
 function bindPermit(request, body) {
-  request.input("permitNumber", sql.NVarChar(50), clean(body.permit_number));
+  request.input(
+    "permitNumber",
+    sql.NVarChar(50),
+    clean(body.permit_number),
+  );
 
   request.input(
     "permitCompanyName",
     sql.NVarChar(255),
-    clean(body.permit_company_name) || clean(body.company_display_name),
+    clean(body.permit_company_name) ||
+      clean(body.company_display_name),
   );
 
-  request.input("permitIssueDate", sql.Date, parseDate(body.permit_issue_date));
+  request.input(
+    "permitIssueDate",
+    sql.Date,
+    parseDate(body.permit_issue_date),
+  );
 
   request.input(
     "permitBranch",
@@ -322,7 +397,7 @@ function bindPermit(request, body) {
   request.input(
     "permitNotes",
     sql.NVarChar(sql.MAX),
-clean(body.permit_notes)
+    clean(body.permit_notes),
   );
 }
 
@@ -363,16 +438,33 @@ async function saveStatusHistory(
   const request = new sql.Request(transaction);
 
   request.input("personId", sql.Int, personId);
-  request.input("oldStatus", sql.NVarChar(50), oldStatus);
-  request.input("newStatus", sql.NVarChar(50), newStatus);
-  request.input("reason", sql.NVarChar(sql.MAX), clean(reason));
+
+  request.input(
+    "oldStatus",
+    sql.NVarChar(50),
+    oldStatus,
+  );
+
+  request.input(
+    "newStatus",
+    sql.NVarChar(50),
+    newStatus,
+  );
+
+  request.input(
+    "reason",
+    sql.NVarChar(sql.MAX),
+    clean(reason),
+  );
 
   const userId = Number(changedBy);
 
   request.input(
     "changedBy",
     sql.Int,
-    Number.isSafeInteger(userId) && userId > 0 ? userId : null,
+    Number.isSafeInteger(userId) && userId > 0
+      ? userId
+      : null,
   );
 
   await request.query(`
@@ -417,9 +509,23 @@ async function updateCoordinatorStatusInTransaction(
 
   const permanentRequest = new sql.Request(transaction);
 
-  permanentRequest.input("nationalId", sql.VarChar(50), normalizedNationalId);
-  permanentRequest.input("securityStatus", sql.NVarChar(50), securityStatus);
-  permanentRequest.input("note", sql.NVarChar(sql.MAX), normalizedNote);
+  permanentRequest.input(
+    "nationalId",
+    sql.VarChar(50),
+    normalizedNationalId,
+  );
+
+  permanentRequest.input(
+    "securityStatus",
+    sql.NVarChar(50),
+    securityStatus,
+  );
+
+  permanentRequest.input(
+    "note",
+    sql.NVarChar(sql.MAX),
+    normalizedNote,
+  );
 
   const permanentResult = await permanentRequest.query(`
     UPDATE dbo.coordinator
@@ -436,9 +542,23 @@ async function updateCoordinatorStatusInTransaction(
 
   const temporaryRequest = new sql.Request(transaction);
 
-  temporaryRequest.input("nationalId", sql.NVarChar(50), normalizedNationalId);
-  temporaryRequest.input("securityStatus", sql.NVarChar(50), securityStatus);
-  temporaryRequest.input("note", sql.NVarChar(sql.MAX), normalizedNote);
+  temporaryRequest.input(
+    "nationalId",
+    sql.NVarChar(50),
+    normalizedNationalId,
+  );
+
+  temporaryRequest.input(
+    "securityStatus",
+    sql.NVarChar(50),
+    securityStatus,
+  );
+
+  temporaryRequest.input(
+    "note",
+    sql.NVarChar(sql.MAX),
+    normalizedNote,
+  );
 
   const temporaryResult = await temporaryRequest.query(`
     UPDATE dbo.temporary_coordinator
@@ -459,7 +579,8 @@ async function updateCoordinatorStatusInTransaction(
     national_id_number: normalizedNationalId,
     security_status: securityStatus,
     coordinator_rows: permanentResult.rowsAffected[0] || 0,
-    temporary_coordinator_rows: temporaryResult.rowsAffected[0] || 0,
+    temporary_coordinator_rows:
+      temporaryResult.rowsAffected[0] || 0,
   };
 }
 
@@ -480,6 +601,7 @@ export async function getSecurityCoordinators(req, res) {
         c.company_name,
         c.national_id_number,
         c.mobile,
+        sp.area AS area,
         c.governorate,
         c.notes,
         c.security_situation,
@@ -547,6 +669,7 @@ export async function getSecurityCoordinators(req, res) {
         CAST(tc.mother_company AS NVARCHAR(255)) AS company_name,
         tc.national_id_number,
         CAST(NULL AS NVARCHAR(100)) AS mobile,
+        CAST(NULL AS NVARCHAR(150)) AS area,
         CAST(NULL AS NVARCHAR(100)) AS governorate,
         tc.notes,
         tc.Security_Situation AS security_situation,
@@ -647,12 +770,20 @@ export async function getSecurityCoordinators(req, res) {
       success: true,
       coordinators,
       total: coordinators.length,
-      imported: coordinators.filter((item) => item.already_imported).length,
-      not_imported: coordinators.filter((item) => !item.already_imported).length,
+      imported: coordinators.filter(
+        (item) => item.already_imported,
+      ).length,
+      not_imported: coordinators.filter(
+        (item) => !item.already_imported,
+      ).length,
       deleted_records: 0,
     });
   } catch (error) {
-    return sendServerError(res, error, "تحميل المناديب والمنسقين");
+    return sendServerError(
+      res,
+      error,
+      "تحميل المناديب والمنسقين",
+    );
   }
 }
 
@@ -669,10 +800,18 @@ export async function importSecurityCoordinators(req, res) {
     const hasNationalIds = Array.isArray(req.body?.national_ids);
 
     const requestedIds = hasNationalIds
-      ? [...new Set(req.body.national_ids.map(clean).filter(validNationalId))]
+      ? [
+          ...new Set(
+            req.body.national_ids
+              .map(clean)
+              .filter(validNationalId),
+          ),
+        ]
       : null;
 
-    const reviews = Array.isArray(req.body?.reviews) ? req.body.reviews : [];
+    const reviews = Array.isArray(req.body?.reviews)
+      ? req.body.reviews
+      : [];
 
     const coordinatorResult = await pool.request().query(`
       SELECT
@@ -731,7 +870,10 @@ export async function importSecurityCoordinators(req, res) {
 
     let coordinators = (coordinatorResult.recordset || [])
       .map((row) => ({
-        ...normalizeCoordinator(row),
+        ...normalizeCoordinator({
+          ...row,
+          area: null,
+        }),
         source_type: row.source_type,
         source_label: getSourceLabel(row.source_type),
         source_priority: Number(row.source_priority),
@@ -823,7 +965,11 @@ export async function importSecurityCoordinators(req, res) {
         .input("name", sql.NVarChar(255), coordinator.name)
         .input("nationalId", sql.NVarChar(50), nationalId)
         .input("job", sql.NVarChar(100), coordinator.job)
-        .input("companyId", sql.NVarChar(100), coordinator.company_name)
+        .input(
+          "companyId",
+          sql.NVarChar(100),
+          coordinator.company_name,
+        )
         .input(
           "advertisingCompanyId",
           sql.Int,
@@ -831,10 +977,31 @@ export async function importSecurityCoordinators(req, res) {
             ? coordinator.advertising_company_id
             : null,
         )
-        .input("branch", sql.NVarChar(255), coordinator.branch)
-        .input("governorate", sql.NVarChar(100), coordinator.governorate)
-        .input("securityStatus", sql.NVarChar(50), sourceStatus)
-        .input("notes", sql.NVarChar(sql.MAX), coordinator.notes)
+        .input(
+          "branch",
+          sql.NVarChar(255),
+          coordinator.branch,
+        )
+        .input(
+          "area",
+          sql.NVarChar(150),
+          coordinator.area,
+        )
+        .input(
+          "governorate",
+          sql.NVarChar(100),
+          coordinator.governorate,
+        )
+        .input(
+          "securityStatus",
+          sql.NVarChar(50),
+          sourceStatus,
+        )
+        .input(
+          "notes",
+          sql.NVarChar(sql.MAX),
+          coordinator.notes,
+        )
         .query(`
           INSERT INTO dbo.security_persons (
             name,
@@ -843,6 +1010,7 @@ export async function importSecurityCoordinators(req, res) {
             company_id,
             advertising_company_id,
             branch,
+            area,
             governorate,
             file_type,
             security_situation,
@@ -857,6 +1025,7 @@ export async function importSecurityCoordinators(req, res) {
             @companyId,
             @advertisingCompanyId,
             @branch,
+            @area,
             @governorate,
             N'مناديب/ منسقين',
             @securityStatus,
@@ -867,11 +1036,12 @@ export async function importSecurityCoordinators(req, res) {
 
       const personId = insertResult.recordset[0].id;
 
-      const synchronization = await updateCoordinatorStatusInTransaction(
-        transaction,
-        nationalId,
-        sourceStatus,
-      );
+      const synchronization =
+        await updateCoordinatorStatusInTransaction(
+          transaction,
+          nationalId,
+          sourceStatus,
+        );
 
       importedCount++;
 
@@ -887,10 +1057,14 @@ export async function importSecurityCoordinators(req, res) {
       });
     }
 
+    /* -------------------------- Review Existing -------------------------- */
+
     for (const review of reviews) {
       const nationalId = clean(review?.national_id_number);
       const status = clean(review?.security_status);
-      const reviewNote = clean(review?.notes ?? review?.review_notes);
+      const reviewNote = clean(
+        review?.notes ?? review?.review_notes,
+      );
 
       if (!validNationalId(nationalId)) {
         reviewResults.push({
@@ -936,8 +1110,14 @@ export async function importSecurityCoordinators(req, res) {
       }
 
       const person = personResult.recordset[0];
-      const oldStatus = clean(person.security_situation) || "غير محدد";
-      const updatedNotes = appendNote(person.notes, reviewNote);
+
+      const oldStatus =
+        clean(person.security_situation) || "غير محدد";
+
+      const updatedNotes = appendNote(
+        person.notes,
+        reviewNote,
+      );
 
       await new sql.Request(transaction)
         .input("personId", sql.Int, person.id)
@@ -961,12 +1141,13 @@ export async function importSecurityCoordinators(req, res) {
         req.user?.id,
       );
 
-      const synchronization = await updateCoordinatorStatusInTransaction(
-        transaction,
-        nationalId,
-        status,
-        reviewNote,
-      );
+      const synchronization =
+        await updateCoordinatorStatusInTransaction(
+          transaction,
+          nationalId,
+          status,
+          reviewNote,
+        );
 
       updatedReviewsCount++;
 
@@ -1007,7 +1188,11 @@ export async function importSecurityCoordinators(req, res) {
       });
     }
 
-    return sendServerError(res, error, "استيراد ومراجعة المنسقين");
+    return sendServerError(
+      res,
+      error,
+      "استيراد ومراجعة المنسقين",
+    );
   }
 }
 
@@ -1070,20 +1255,34 @@ export async function updateCoordinatorSecurity(req, res) {
 
       return res.status(404).json({
         success: false,
-        message: "المنسق غير موجود في سجلات الأمن. استورده أولاً.",
+        message:
+          "المنسق غير موجود في سجلات الأمن. استورده أولاً.",
       });
     }
 
     const person = existing.recordset[0];
 
-    const oldStatus = clean(person.security_situation) || "غير محدد";
-    const finalStatus = updateStatus ? requestedStatus : oldStatus;
+    const oldStatus =
+      clean(person.security_situation) || "غير محدد";
+
+    const finalStatus = updateStatus
+      ? requestedStatus
+      : oldStatus;
+
     const updatedNotes = appendNote(person.notes, newNote);
 
     await new sql.Request(transaction)
       .input("personId", sql.Int, person.id)
-      .input("securityStatus", sql.NVarChar(50), finalStatus)
-      .input("notes", sql.NVarChar(sql.MAX), updatedNotes)
+      .input(
+        "securityStatus",
+        sql.NVarChar(50),
+        finalStatus,
+      )
+      .input(
+        "notes",
+        sql.NVarChar(sql.MAX),
+        updatedNotes,
+      )
       .query(`
         UPDATE dbo.security_persons
         SET
@@ -1102,12 +1301,13 @@ export async function updateCoordinatorSecurity(req, res) {
       req.user?.id,
     );
 
-    const synchronization = await updateCoordinatorStatusInTransaction(
-      transaction,
-      nationalId,
-      finalStatus,
-      newNote,
-    );
+    const synchronization =
+      await updateCoordinatorStatusInTransaction(
+        transaction,
+        nationalId,
+        finalStatus,
+        newNote,
+      );
 
     await transaction.commit();
     transaction = null;
@@ -1124,7 +1324,11 @@ export async function updateCoordinatorSecurity(req, res) {
   } catch (error) {
     await rollbackSafely(transaction);
 
-    return sendServerError(res, error, "تحديث موقف المنسق الأمني");
+    return sendServerError(
+      res,
+      error,
+      "تحديث موقف المنسق الأمني",
+    );
   }
 }
 
@@ -1135,11 +1339,17 @@ export async function updateCoordinatorSecurity(req, res) {
 
 export async function getSecurityRecords(req, res) {
   try {
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const page = Math.max(
+      1,
+      parseInt(req.query.page, 10) || 1,
+    );
 
     const limit = Math.min(
       MAX_PAGE_SIZE,
-      Math.max(1, parseInt(req.query.limit, 10) || DEFAULT_PAGE_SIZE),
+      Math.max(
+        1,
+        parseInt(req.query.limit, 10) || DEFAULT_PAGE_SIZE,
+      ),
     );
 
     const offset = (page - 1) * limit;
@@ -1190,6 +1400,7 @@ export async function getSecurityRecords(req, res) {
           p.advertising_company_id,
           p.advertising_company_name,
 
+          p.area,
           p.governorate,
           p.branch AS person_branch,
           p.branch_name,
@@ -1202,7 +1413,6 @@ export async function getSecurityRecords(req, res) {
           ISNULL(inc.incident_count, 0) AS total_incidents,
           ISNULL(per.permit_count, 0) AS total_permits,
 
-          /* العميل نوع ملفه 25 دائمًا، حتى بدون وجود واقعة. */
           CASE
             WHEN LTRIM(RTRIM(ISNULL(p.job, N''))) = N'عميل'
               THEN N'25'
@@ -1259,7 +1469,7 @@ export async function getSecurityRecords(req, res) {
           per.permit_branch,
           per.permit_notes,
 
-NULLIF(LTRIM(RTRIM(p.notes)), N'') AS notes,
+          NULLIF(LTRIM(RTRIM(p.notes)), N'') AS notes,
 
           CASE
             WHEN inc.latest_incident_date IS NULL
@@ -1420,7 +1630,6 @@ NULLIF(LTRIM(RTRIM(p.notes)), N'') AS notes,
                LTRIM(RTRIM(@status))
           )
 
-          /* فلتر نوع الملف 25 يشمل العملاء والوقائع. */
           AND (
             @fileType IS NULL
 
@@ -1453,6 +1662,7 @@ NULLIF(LTRIM(RTRIM(p.notes)), N'') AS notes,
 
             OR ISNULL(r.name, N'') LIKE @search
             OR ISNULL(r.national_id_number, N'') LIKE @search
+            OR ISNULL(r.area, N'') LIKE @search
             OR ISNULL(r.governorate, N'') LIKE @search
 
             OR CONVERT(NVARCHAR(20), r.person_id) LIKE @search
@@ -1484,10 +1694,9 @@ NULLIF(LTRIM(RTRIM(p.notes)), N'') AS notes,
         *,
         COUNT(*) OVER() AS total_count
       FROM FilteredRecords
-ORDER BY
-  person_id DESC
-OFFSET @offset ROWS
-FETCH NEXT @limit ROWS ONLY;
+      ORDER BY person_id DESC
+      OFFSET @offset ROWS
+      FETCH NEXT @limit ROWS ONLY;
     `);
 
     const records = (result.recordset || []).map((item) => {
@@ -1519,6 +1728,7 @@ FETCH NEXT @limit ROWS ONLY;
 
       return {
         ...person,
+        area: clean(person.area),
         incidents,
         permits,
         total_incidents: incidents.length,
@@ -1545,7 +1755,11 @@ FETCH NEXT @limit ROWS ONLY;
       },
     });
   } catch (error) {
-    return sendServerError(res, error, "تحميل سجلات الأمن");
+    return sendServerError(
+      res,
+      error,
+      "تحميل سجلات الأمن",
+    );
   }
 }
 
@@ -1567,19 +1781,26 @@ export async function getSecurityByNationalId(req, res) {
     const pool = await retailPoolPromise;
     const request = pool.request();
 
-    request.input("nationalId", sql.NVarChar(50), nationalId);
+    request.input(
+      "nationalId",
+      sql.NVarChar(50),
+      nationalId,
+    );
 
     const result = await request.query(`
       SELECT
         p.*,
+
         CASE
           WHEN LTRIM(RTRIM(ISNULL(p.job, N''))) = N'عميل'
             THEN N'25'
           ELSE p.file_type
         END AS customer_file_type,
+
         CASE
           WHEN ISNULL(p.notes, N'') LIKE N'%ممنوع%'
             THEN N'بلوك'
+
           WHEN REPLACE(
             REPLACE(
               REPLACE(
@@ -1598,6 +1819,7 @@ export async function getSecurityByNationalId(req, res) {
             N''
           ) LIKE N'%تمأخذجزاءبسبب%'
             THEN N'تحت المراجعة'
+
           WHEN REPLACE(
             REPLACE(
               REPLACE(
@@ -1616,11 +1838,13 @@ export async function getSecurityByNationalId(req, res) {
             N''
           ) LIKE N'%لامانع%'
             THEN N'سليم'
+
           ELSE ISNULL(
             NULLIF(p.security_situation, N''),
             N'غير محدد'
           )
         END AS security_status
+
       FROM dbo.security_persons p
       WHERE
         p.national_id_number = @nationalId
@@ -1674,7 +1898,6 @@ export async function getSecurityByNationalId(req, res) {
       });
     }
 
-    // إرجاع file_type = 25 للعميل حتى لو كان السجل قديمًا.
     if (clean(person.job) === "عميل") {
       person.file_type = "25";
     }
@@ -1683,12 +1906,17 @@ export async function getSecurityByNationalId(req, res) {
       success: true,
       record: {
         ...person,
+        area: clean(person.area),
         incidents: result.recordsets?.[1] || [],
         permits: result.recordsets?.[2] || [],
       },
     });
   } catch (error) {
-    return sendServerError(res, error, "البحث عن السجل");
+    return sendServerError(
+      res,
+      error,
+      "البحث عن السجل",
+    );
   }
 }
 
@@ -1696,14 +1924,12 @@ export async function getSecurityByNationalId(req, res) {
 /* POST /security                                                             */
 /* -------------------------------------------------------------------------- */
 
-
 export async function createSecurityRecord(req, res) {
   let transaction;
 
   try {
     const job = clean(req.body.job);
 
-    // تحديد نوع الملف تلقائيًا حسب الوظيفة
     let fileType = clean(req.body.file_type);
 
     if (job === "عميل") {
@@ -1714,14 +1940,12 @@ export async function createSecurityRecord(req, res) {
       fileType = "مناديب/منسقين";
     }
 
-    // تجهيز البيانات بالقيمة الصحيحة
     const body = {
       ...req.body,
       job,
       file_type: fileType,
     };
 
-    // التحقق من البيانات بعد تصحيح نوع الملف
     const validationError = validateBody(body);
 
     if (validationError) {
@@ -1740,7 +1964,6 @@ export async function createSecurityRecord(req, res) {
     const nationalId = clean(body.national_id_number);
     const securityStatus = getSecurityStatus(body);
 
-    // التأكد من عدم تكرار الرقم القومي
     const duplicate = await new sql.Request(transaction)
       .input("nationalId", sql.NVarChar(50), nationalId)
       .query(`
@@ -1763,7 +1986,8 @@ export async function createSecurityRecord(req, res) {
       });
     }
 
-    // إضافة بيانات الشخص
+    /* ---------------------------- Insert Person --------------------------- */
+
     const personRequest = new sql.Request(transaction);
 
     bindPerson(personRequest, body);
@@ -1782,6 +2006,7 @@ export async function createSecurityRecord(req, res) {
         branch,
         branch_name,
         governorate,
+        area,
         file_type,
         security_situation,
         notes,
@@ -1801,6 +2026,7 @@ export async function createSecurityRecord(req, res) {
         @branch,
         @branchName,
         @governorate,
+        @area,
         @fileType,
         @securityStatus,
         @notes,
@@ -1810,12 +2036,18 @@ export async function createSecurityRecord(req, res) {
 
     const personId = personResult.recordset[0].id;
 
-    // إضافة الواقعة إن وجدت
+    /* --------------------------- Insert Incident -------------------------- */
+
     if (hasIncidentData(body)) {
       const incidentRequest = new sql.Request(transaction);
 
       bindIncident(incidentRequest, body);
-      incidentRequest.input("personId", sql.Int, personId);
+
+      incidentRequest.input(
+        "personId",
+        sql.Int,
+        personId,
+      );
 
       await incidentRequest.query(`
         INSERT INTO dbo.security_incidents (
@@ -1837,12 +2069,18 @@ export async function createSecurityRecord(req, res) {
       `);
     }
 
-    // إضافة التصريح إن وجد
+    /* ---------------------------- Insert Permit --------------------------- */
+
     if (hasPermitData(body)) {
       const permitRequest = new sql.Request(transaction);
 
       bindPermit(permitRequest, body);
-      permitRequest.input("personId", sql.Int, personId);
+
+      permitRequest.input(
+        "personId",
+        sql.Int,
+        personId,
+      );
 
       await permitRequest.query(`
         INSERT INTO dbo.security_permits (
@@ -1864,7 +2102,8 @@ export async function createSecurityRecord(req, res) {
       `);
     }
 
-    // مزامنة الموقف الأمني مع جدول المنسقين
+    /* -------------------------- Synchronize Status ------------------------ */
+
     const synchronization =
       await updateCoordinatorStatusInTransaction(
         transaction,
@@ -1880,6 +2119,7 @@ export async function createSecurityRecord(req, res) {
       success: true,
       message: "تمت إضافة السجل بنجاح.",
       id: personId,
+      area: clean(body.area),
       security_status: securityStatus,
       file_type: fileType,
       synchronization,
@@ -1894,142 +2134,162 @@ export async function createSecurityRecord(req, res) {
       });
     }
 
-    console.error("createSecurityRecord error:", error);
-
-    return sendServerError(res, error, "إضافة السجل");
+    return sendServerError(
+      res,
+      error,
+      "إضافة السجل",
+    );
   }
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* PUT /security/national-id/:nationalId                                      */
 /* -------------------------------------------------------------------------- */
 
 export const updateSecurityRecord = async (req, res) => {
-  const transaction = new sql.Transaction(await retailPoolPromise);
+  const nationalId = clean(req.params.nationalId);
+
+  if (!validNationalId(nationalId)) {
+    return res.status(400).json({
+      success: false,
+      message: "الرقم القومي غير صحيح.",
+    });
+  }
+
+  const body = {
+    ...req.body,
+    national_id_number: nationalId,
+  };
+
+  const validation = validatePersonBody(body, nationalId);
+
+  if (validation) {
+    return res.status(400).json({
+      success: false,
+      message: validation,
+    });
+  }
+
+  let transaction;
 
   try {
-    // الرقم القومي المعتمد هو الموجود في URL فقط
-    const nationalId = clean(req.params.nationalId);
+    const pool = await retailPoolPromise;
 
-    if (!nationalId || !validNationalId(nationalId)) {
-      return res.status(400).json({
-        success: false,
-        message: "الرقم القومي غير صحيح",
-      });
-    }
+    transaction = new sql.Transaction(pool);
 
-    // لا نسمح بتغيير الرقم القومي من خلال body
-    const body = {
-      ...req.body,
-      national_id_number: nationalId,
-    };
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    // التحقق من صحة البيانات
-    const validation = validatePersonBody(body, nationalId);
-
-    if (validation) {
-      return res.status(400).json({
-        success: false,
-        message: validation,
-      });
-    }
-
-    await transaction.begin();
-
-    // البحث عن الشخص باستخدام الرقم القومي الأصلي
-    const existingRequest = new sql.Request(transaction);
-
-    existingRequest.input(
-      "national_id_number",
-      sql.VarChar(14),
-      nationalId
-    );
-
-    const existingResult = await existingRequest.query(`
-      SELECT TOP 1 *
-      FROM dbo.security_persons
-      WHERE national_id_number = @national_id_number
-    `);
+    const existingResult = await new sql.Request(transaction)
+      .input("nationalId", sql.NVarChar(50), nationalId)
+      .query(`
+        SELECT TOP 1
+          id,
+          security_situation,
+          notes
+        FROM dbo.security_persons WITH (UPDLOCK, HOLDLOCK)
+        WHERE
+          LTRIM(RTRIM(national_id_number)) = @nationalId
+          AND ISNULL(is_deleted, 0) = 0;
+      `);
 
     if (!existingResult.recordset.length) {
-      await transaction.rollback();
+      await rollbackSafely(transaction);
+      transaction = null;
 
       return res.status(404).json({
         success: false,
-        message: "لم يتم العثور على سجل بهذا الرقم القومي",
+        message: "لم يتم العثور على سجل نشط بهذا الرقم القومي.",
       });
     }
 
     const existingPerson = existingResult.recordset[0];
 
-    // تحديث بيانات الشخص دون تغيير الرقم القومي
+    const oldStatus =
+      clean(existingPerson.security_situation) || "غير محدد";
+
+    const newStatus = getSecurityStatus(body);
+
+    const updatedNotes =
+      body.notes === undefined
+        ? clean(existingPerson.notes)
+        : clean(body.notes);
+
     const updateRequest = new sql.Request(transaction);
 
-    bindPerson(updateRequest, body);
+    bindPerson(updateRequest, {
+      ...body,
+      notes: updatedNotes,
+    });
 
     updateRequest.input(
-      "person_id",
+      "personId",
       sql.Int,
-      existingPerson.id
+      existingPerson.id,
     );
 
     await updateRequest.query(`
       UPDATE dbo.security_persons
       SET
-        full_name = @full_name,
-        birth_date = @birth_date,
-        birth_place = @birth_place,
+        name = @name,
+        birth_date = @birthDate,
+        birth_place = @birthPlace,
         job = @job,
-        parent_company = @parent_company,
-        advertising_company = @advertising_company,
+        company_id = @companyId,
+        company_display_name = @companyDisplayName,
+        advertising_company_id = @advertisingCompanyId,
+        advertising_company_name = @advertisingCompanyName,
         branch = @branch,
+        branch_name = @branchName,
         governorate = @governorate,
-        file_type = @file_type,
-        security_status = @security_status,
+        area = @area,
+        file_type = @fileType,
+        security_situation = @securityStatus,
         notes = @notes,
-        updated_at = GETDATE()
-      WHERE id = @person_id
+        updated_at = SYSDATETIME()
+      WHERE
+        id = @personId
+        AND ISNULL(is_deleted, 0) = 0;
     `);
 
-    // تسجيل تغيير الموقف الأمني في سجل التاريخ
     await saveStatusHistory(
       transaction,
       existingPerson.id,
-      existingPerson.security_status,
-      body.security_status,
-      req.user?.id || null,
-      body.status_note || null
+      oldStatus,
+      newStatus,
+      body.status_note ?? null,
+      req.user?.id,
     );
 
-    // مزامنة الموقف الأمني مع جدول المنسقين
-    await updateCoordinatorStatusInTransaction(
-      transaction,
-      nationalId,
-      body.security_status
-    );
+    const synchronization =
+      await updateCoordinatorStatusInTransaction(
+        transaction,
+        nationalId,
+        newStatus,
+        body.status_note ?? null,
+      );
 
     await transaction.commit();
+    transaction = null;
 
     return res.status(200).json({
       success: true,
-      message: "تم تحديث بيانات السجل الأمني بنجاح",
+      message: "تم تحديث بيانات السجل الأمني بنجاح.",
       data: {
         id: existingPerson.id,
         national_id_number: nationalId,
-        security_status: body.security_status,
+        area: clean(body.area),
+        security_status: newStatus,
       },
+      synchronization,
     });
   } catch (error) {
     await rollbackSafely(transaction);
 
-    console.error("updateSecurityRecord error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "حدث خطأ أثناء تحديث السجل الأمني",
-      error: error.message,
-    });
+    return sendServerError(
+      res,
+      error,
+      "تحديث السجل الأمني",
+    );
   }
 };
 
@@ -2106,7 +2366,8 @@ export async function updateSecurityIncident(req, res) {
 
     bindIncident(updateRequest, {
       ...req.body,
-      incident_notes: req.body?.incident_notes ?? req.body?.notes,
+      incident_notes:
+        req.body?.incident_notes ?? req.body?.notes,
     });
 
     updateRequest.input("incidentId", sql.Int, incidentId);
@@ -2136,7 +2397,11 @@ export async function updateSecurityIncident(req, res) {
   } catch (error) {
     await rollbackSafely(transaction);
 
-    return sendServerError(res, error, "تعديل الواقعة");
+    return sendServerError(
+      res,
+      error,
+      "تعديل الواقعة",
+    );
   }
 }
 
@@ -2202,7 +2467,8 @@ export async function updateSecurityPermit(req, res) {
 
     bindPermit(updateRequest, {
       ...req.body,
-      permit_notes: req.body?.permit_notes ?? req.body?.notes,
+      permit_notes:
+        req.body?.permit_notes ?? req.body?.notes,
     });
 
     updateRequest.input("permitId", sql.Int, permitId);
@@ -2232,7 +2498,11 @@ export async function updateSecurityPermit(req, res) {
   } catch (error) {
     await rollbackSafely(transaction);
 
-    return sendServerError(res, error, "تعديل التصريح");
+    return sendServerError(
+      res,
+      error,
+      "تعديل التصريح",
+    );
   }
 }
 
@@ -2311,7 +2581,11 @@ export async function deleteSecurityRecord(req, res) {
   } catch (error) {
     await rollbackSafely(transaction);
 
-    return sendServerError(res, error, "حذف السجل");
+    return sendServerError(
+      res,
+      error,
+      "حذف السجل",
+    );
   }
 }
 
@@ -2363,7 +2637,10 @@ export const checkSecurityNationalId = async (req, res) => {
       notes: record?.notes || "",
     });
   } catch (error) {
-    console.error("Check security national ID error:", error);
+    console.error(
+      "Check security national ID error:",
+      error,
+    );
 
     return res.status(500).json({
       success: false,
