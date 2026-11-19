@@ -2648,3 +2648,150 @@ export const checkSecurityNationalId = async (req, res) => {
     });
   }
 };
+
+/* -------------------------------------------------------------------------- */
+/* GET /security/dashboard/stats                                              */
+/* Security Dashboard Statistics                                              */
+/* -------------------------------------------------------------------------- */
+
+export async function getSecurityDashboardStats(req, res) {
+  try {
+    const pool = await retailPoolPromise;
+
+    const result = await pool.request().query(`
+      SELECT
+        /* Persons */
+        (
+          SELECT COUNT_BIG(1)
+          FROM dbo.security_persons
+          WHERE ISNULL(is_deleted, 0) = 0
+        ) AS totalPersons,
+
+        (
+          SELECT COUNT_BIG(1)
+          FROM dbo.security_persons
+          WHERE
+            ISNULL(is_deleted, 0) = 0
+            AND LTRIM(RTRIM(ISNULL(security_situation, N''))) = N'سليم'
+        ) AS safePersons,
+
+        (
+          SELECT COUNT_BIG(1)
+          FROM dbo.security_persons
+          WHERE
+            ISNULL(is_deleted, 0) = 0
+            AND LTRIM(RTRIM(ISNULL(security_situation, N''))) = N'تحت المراجعة'
+        ) AS underReviewPersons,
+
+        (
+          SELECT COUNT_BIG(1)
+          FROM dbo.security_persons
+          WHERE
+            ISNULL(is_deleted, 0) = 0
+            AND LTRIM(RTRIM(ISNULL(security_situation, N'')))
+                IN (N'مرفوض', N'غير سليم', N'محظور', N'بلوك')
+        ) AS blockedPersons,
+
+        (
+          SELECT COUNT_BIG(1)
+          FROM dbo.security_persons
+          WHERE
+            ISNULL(is_deleted, 0) = 0
+            AND LTRIM(RTRIM(ISNULL(security_situation, N'')))
+                NOT IN (
+                  N'سليم',
+                  N'تحت المراجعة',
+                  N'مرفوض',
+                  N'غير سليم',
+                  N'محظور',
+                  N'بلوك'
+                )
+        ) AS unspecifiedPersons,
+
+        /* Incidents */
+        (
+          SELECT COUNT_BIG(1)
+          FROM dbo.security_incidents i
+          INNER JOIN dbo.security_persons p
+            ON p.id = i.security_person_id
+          WHERE ISNULL(p.is_deleted, 0) = 0
+        ) AS totalIncidents,
+
+        (
+          SELECT COUNT(DISTINCT i.security_person_id)
+          FROM dbo.security_incidents i
+          INNER JOIN dbo.security_persons p
+            ON p.id = i.security_person_id
+          WHERE ISNULL(p.is_deleted, 0) = 0
+        ) AS affectedPersons,
+
+        (
+          SELECT COALESCE(
+            SUM(TRY_CONVERT(DECIMAL(18, 2), i.stolen_goods_value)),
+            0
+          )
+          FROM dbo.security_incidents i
+          INNER JOIN dbo.security_persons p
+            ON p.id = i.security_person_id
+          WHERE ISNULL(p.is_deleted, 0) = 0
+        ) AS stolenGoodsValue,
+
+        /* Permits */
+        (
+          SELECT COUNT_BIG(1)
+          FROM dbo.security_permits pm
+          INNER JOIN dbo.security_persons p
+            ON p.id = pm.security_person_id
+          WHERE ISNULL(p.is_deleted, 0) = 0
+        ) AS totalPermits,
+
+        /* Status History */
+        (
+          SELECT COUNT_BIG(1)
+          FROM dbo.security_status_history h
+          INNER JOIN dbo.security_persons p
+            ON p.id = h.security_person_id
+          WHERE ISNULL(p.is_deleted, 0) = 0
+        ) AS totalStatusChanges;
+    `);
+
+    const row = result.recordset[0];
+
+    const toNumber = (value) => Number(value ?? 0);
+
+    return res.status(200).json({
+      success: true,
+      message: "تم تحميل إحصائيات لوحة الأمن بنجاح.",
+
+      stats: {
+        persons: {
+          total: toNumber(row.totalPersons),
+          safe: toNumber(row.safePersons),
+          underReview: toNumber(row.underReviewPersons),
+          blocked: toNumber(row.blockedPersons),
+          unspecified: toNumber(row.unspecifiedPersons),
+        },
+
+        incidents: {
+          total: toNumber(row.totalIncidents),
+          affectedPersons: toNumber(row.affectedPersons),
+          stolenGoodsValue: toNumber(row.stolenGoodsValue),
+        },
+
+        permits: {
+          total: toNumber(row.totalPermits),
+        },
+
+        statusHistory: {
+          total: toNumber(row.totalStatusChanges),
+        },
+      },
+    });
+  } catch (error) {
+    return sendServerError(
+      res,
+      error,
+      "تحميل إحصائيات لوحة الأمن",
+    );
+  }
+}

@@ -22,6 +22,7 @@ import advertisingCompany from "./routes/advertisingCompany.js";
 import retailRoutes from "./routes/retail.js";
 import securityRoutes from "./routes/security.js";
 import dashboardMarketingCoordinatorsRouter from "./routes/dashboardMarketingCoordinators.js";
+import recuritmentRoutes from "./routes/recuritment.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -90,6 +91,7 @@ app.use("/card-logs", cardLogsRouter);
 app.use("/temporary-coordinators", temporaryCoordinator);
 app.use("/advertising-companies", advertisingCompany);
 app.use("/security", securityRoutes);
+app.use("/recuritment", recuritmentRoutes);
 
 const frontendDistPath = process.env.FRONTEND_DIST_PATH;
 
