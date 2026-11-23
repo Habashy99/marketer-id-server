@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 
 import {
   retailPoolPromise,
-  securityPoolPromise,
   sql,
 } from "../config/db.js";
 
@@ -173,6 +172,18 @@ function getColumnValue(value) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* SQL Helpers                                                                */
+/* -------------------------------------------------------------------------- */
+
+function addSqlParameters(request, values, prefix, type) {
+  values.forEach((value, index) => {
+    request.input(`${prefix}${index}`, type, value);
+  });
+
+  return values.map((_, index) => `@${prefix}${index}`).join(", ");
+}
+
+/* -------------------------------------------------------------------------- */
 /* Excel Sheet Selection                                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -253,31 +264,56 @@ function findActualLastRow(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Security Lookup                                                            */
+/* Find Security National IDs                                                 */
 /* -------------------------------------------------------------------------- */
 
 async function findSecurityNationalIds(nationalIds) {
   const foundIds = new Set();
 
-  if (!nationalIds.length) {
+  const uniqueIds = [
+    ...new Set(
+      nationalIds
+        .map((id) => normalizeNationalId(id))
+        .filter((id) => /^\d{14}$/.test(id)),
+    ),
+  ];
+
+  if (!uniqueIds.length) {
     return foundIds;
   }
 
   const pool = await retailPoolPromise;
 
-  const result = await pool.request().query(`
-    SELECT national_id_number
-    FROM dbo.security_persons
-    WHERE national_id_number IS NOT NULL;
-  `);
+  // تقسيم الأرقام إلى مجموعات لتجنب حد SQL Server للـ parameters
+  const CHUNK_SIZE = 1000;
 
-  for (const record of result.recordset) {
-    const nationalId = normalizeNationalId(
-      record.national_id_number,
+  for (let index = 0; index < uniqueIds.length; index += CHUNK_SIZE) {
+    const chunk = uniqueIds.slice(index, index + CHUNK_SIZE);
+
+    const request = pool.request();
+
+    const placeholders = addSqlParameters(
+      request,
+      chunk,
+      "nationalId",
+      sql.NVarChar(14),
     );
 
-    if (/^\d{14}$/.test(nationalId)) {
-      foundIds.add(nationalId);
+    const result = await request.query(`
+      SELECT national_id_number
+      FROM dbo.security_persons
+      WHERE national_id_number IN (${placeholders})
+        AND ISNULL(is_deleted, 0) = 0;
+    `);
+
+    for (const record of result.recordset || []) {
+      const nationalId = normalizeNationalId(
+        record.national_id_number,
+      );
+
+      if (/^\d{14}$/.test(nationalId)) {
+        foundIds.add(nationalId);
+      }
     }
   }
 
@@ -400,9 +436,7 @@ async function processRecuritmentWorkbook(fileBuffer) {
       continue;
     }
 
-    const name = serializeCellValue(
-      row[nameColumnIndex],
-    );
+    const name = serializeCellValue(row[nameColumnIndex]);
 
     const rawNationalId = row[nationalIdColumnIndex];
 
@@ -548,13 +582,14 @@ async function processRecuritmentWorkbook(fileBuffer) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Check Applicants - Upload Once                                             */
+/* Check Applicants - Upload Excel                                            */
 /* -------------------------------------------------------------------------- */
 
 export async function checkRecuritment(req, res) {
   try {
     if (!req.file) {
       return res.status(400).json({
+        success: false,
         message: "من فضلك اختر ملف Excel أولاً.",
       });
     }
@@ -575,6 +610,7 @@ export async function checkRecuritment(req, res) {
     });
 
     return res.status(200).json({
+      success: true,
       message: "تم رفع وفحص الملف بنجاح.",
       jobId,
       expiresInMinutes: 30,
@@ -586,6 +622,7 @@ export async function checkRecuritment(req, res) {
     console.error("Recuritment check error:", error);
 
     return res.status(500).json({
+      success: false,
       message:
         error.message ||
         "حدث خطأ أثناء فحص ملف المتقدمين.",
@@ -607,6 +644,7 @@ export async function downloadRecuritmentResults(req, res) {
 
     if (!savedFile) {
       return res.status(404).json({
+        success: false,
         message:
           "الملف غير موجود أو انتهت مدة الاحتفاظ به. ارفع الملف مرة أخرى.",
       });
@@ -614,6 +652,7 @@ export async function downloadRecuritmentResults(req, res) {
 
     if (savedFile.ownerId !== String(req.user.id)) {
       return res.status(403).json({
+        success: false,
         message: "ليس لديك صلاحية تنزيل هذا الملف.",
       });
     }
@@ -633,519 +672,192 @@ export async function downloadRecuritmentResults(req, res) {
     console.error("Recuritment download error:", error);
 
     return res.status(500).json({
+      success: false,
       message: "حدث خطأ أثناء تنزيل ملف النتائج.",
     });
   }
 }
 
 /* -------------------------------------------------------------------------- */
-/* Recruitment Applicants - Helpers                                          */
+/* Security National ID Lookup                                                */
 /* -------------------------------------------------------------------------- */
 
-function getEmployeeCode(req) {
-  const code = Number(req.user?.code);
-
-  if (!Number.isInteger(code) || code <= 0) {
-    throw new Error(
-      "تعذر تحديد كود الموظف المسجل دخوله.",
-    );
-  }
-
-  return code;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Validate Applicant Data                                                    */
-/* -------------------------------------------------------------------------- */
-
-function validateApplicantData(body = {}) {
-  const name = String(body.name ?? "").trim();
-
-  const nationalId = normalizeNationalId(
-    body.nationalId,
-  ).trim();
-
-  const mobile = normalizeNationalId(
-    body.mobile,
-  ).trim();
-
-  const applicationDate = String(
-    body.applicationDate ?? "",
-  ).trim();
-
-  const decision = String(
-    body.decision ?? "",
-  ).trim();
-
-  const reason = String(
-    body.reason ?? "",
-  ).trim();
-
-  if (!name || name.length > 200) {
-    throw new Error(
-      "اسم المتقدم مطلوب، وبحد أقصى 200 حرف.",
-    );
-  }
-
-  if (!/^\d{14}$/.test(nationalId)) {
-    throw new Error(
-      "الرقم القومي يجب أن يتكون من 14 رقمًا.",
-    );
-  }
-
-  if (!mobile || mobile.length > 20) {
-    throw new Error(
-      "رقم التليفون مطلوب وبحد أقصى 20 خانة.",
-    );
-  }
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(applicationDate)) {
-    throw new Error("تاريخ التقديم غير صحيح.");
-  }
-
-  const [year, month, day] = applicationDate
-    .split("-")
-    .map(Number);
-
-  const date = new Date(
-    Date.UTC(year, month - 1, day),
-  );
-
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day
-  ) {
-    throw new Error("تاريخ التقديم غير صحيح.");
-  }
-
-  if (decision.length > 100) {
-    throw new Error(
-      "قرار التعيين يجب ألا يتجاوز 100 حرف.",
-    );
-  }
-
-  if (reason.length > 1000) {
-    throw new Error(
-      "سبب القرار يجب ألا يتجاوز 1000 حرف.",
-    );
-  }
-
-  return {
-    name,
-    nationalId,
-    mobile,
-    applicationDate,
-    decision: decision || null,
-    reason: reason || null,
-  };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Check Applicant National ID                                                */
-/* -------------------------------------------------------------------------- */
-
-async function checkApplicantNationalId(
-  pool,
-  nationalId,
-  excludeId = null,
-) {
-  // التأكد من عدم وجود الرقم القومي في جدول الأمن
-  const securityIds = await findSecurityNationalIds([
-    nationalId,
-  ]);
-
-  if (securityIds.has(nationalId)) {
-    throw new Error(
-      "هذا الرقم القومي موجود في جدول الأمن، لذلك لا يمكن إضافة المتقدم.",
-    );
-  }
-
-  // منع تكرار الرقم القومي في المتقدمين غير المحذوفين
-  const request = pool.request();
-
-  request.input(
-    "nationalId",
-    sql.NVarChar(14),
-    nationalId,
-  );
-
-  let duplicateQuery = `
-    SELECT TOP 1 id
-    FROM dbo.recruitment_applicants
-    WHERE national_id = @nationalId
-      AND is_deleted = 0
-  `;
-
-  if (excludeId !== null) {
-    request.input("excludeId", sql.Int, excludeId);
-
-    duplicateQuery += " AND id <> @excludeId";
-  }
-
-  const duplicate = await request.query(
-    duplicateQuery,
-  );
-
-  if (duplicate.recordset.length > 0) {
-    throw new Error(
-      "هذا الرقم القومي مسجل بالفعل في المتقدمين.",
-    );
-  }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Get Applicants - Pagination                                               */
-/* -------------------------------------------------------------------------- */
-
-export async function getRecruitmentApplicants(req, res) {
+export async function checkSecurityNationalId(req, res) {
   try {
-    const page = Math.max(
-      1,
-      parseInt(req.query.page, 10) || 1,
-    );
+const nationalId = normalizeNationalId(
+  req.body?.nationalId ?? req.params?.nationalId,
+).trim();
 
-    const limit = Math.min(
-      50,
-      Math.max(
-        1,
-        parseInt(req.query.limit, 10) || 50,
-      ),
-    );
+    if (!/^\d{14}$/.test(nationalId)) {
+      return res.status(400).json({
+        success: false,
+        exists: false,
+        message: "الرقم القومي يجب أن يتكون من 14 رقمًا.",
+      });
+    }
 
-    const offset = (page - 1) * limit;
+    const pool = await retailPoolPromise;
 
-    const pool = await securityPoolPromise;
-
-    const countResult = await pool.request().query(`
-      SELECT COUNT(*) AS total
-      FROM dbo.recruitment_applicants
-      WHERE is_deleted = 0;
-    `);
-
-    const total = countResult.recordset[0].total;
-
-    const totalPages = Math.ceil(total / limit);
-
-    const dataResult = await pool
+    // 1. بيانات الأشخاص
+    const personsResult = await pool
       .request()
-      .input("offset", sql.Int, offset)
-      .input("limit", sql.Int, limit)
+      .input("nationalId", sql.NVarChar(14), nationalId)
       .query(`
         SELECT
           id,
           name,
-          national_id AS nationalId,
-          mobile,
-          application_date AS applicationDate,
-          decision,
-          reason,
-          created_by AS createdBy,
-          updated_by AS updatedBy,
-          is_deleted AS isDeleted,
-          created_at AS createdAt,
-          updated_at AS updatedAt
-        FROM dbo.recruitment_applicants
-        WHERE is_deleted = 0
-        ORDER BY created_at DESC, id DESC
-        OFFSET @offset ROWS
-        FETCH NEXT @limit ROWS ONLY;
+          national_id_number,
+          birth_date,
+          birth_place,
+          security_situation,
+          notes,
+          created_at,
+          updated_at,
+          job,
+          company_id,
+          company_display_name,
+          advertising_company_id,
+          branch,
+          branch_name,
+          governorate,
+          file_type,
+          advertising_company_name
+        FROM dbo.security_persons
+        WHERE LTRIM(RTRIM(national_id_number)) = @nationalId
+          AND ISNULL(is_deleted, 0) = 0
+        ORDER BY created_at DESC, id DESC;
       `);
+
+    const persons = personsResult.recordset || [];
+
+    if (persons.length === 0) {
+      return res.status(200).json({
+        success: true,
+        exists: false,
+        nationalId,
+        message: "هذا الرقم القومي غير موجود في سجلات الأمن.",
+        records: [],
+        summary: {
+          persons: 0,
+          incidents: 0,
+          statusChanges: 0,
+          permits: 0,
+        },
+      });
+    }
+
+    const personIds = persons.map((person) => person.id);
+
+    // تجهيز Parameters آمنة للأشخاص
+    const createPersonIdRequest = () => {
+      const request = pool.request();
+
+      const placeholders = addSqlParameters(
+        request,
+        personIds,
+        "personId",
+        sql.Int,
+      );
+
+      return { request, placeholders };
+    };
+
+    // 2. الوقائع الأمنية
+    const incidentsQuery = createPersonIdRequest();
+
+    const incidentsResult = await incidentsQuery.request.query(`
+      SELECT
+        id,
+        security_person_id,
+        branch,
+        stolen_goods,
+        stolen_goods_value,
+        incident_date,
+        notes
+      FROM dbo.security_incidents
+      WHERE security_person_id IN (${incidentsQuery.placeholders})
+      ORDER BY incident_date DESC, id DESC;
+    `);
+
+    // 3. تاريخ تغييرات الحالة الأمنية
+    const historyQuery = createPersonIdRequest();
+
+    const historyResult = await historyQuery.request.query(`
+      SELECT
+        id,
+        security_person_id,
+        old_status,
+        new_status,
+        reason,
+        changed_by,
+        changed_at
+      FROM dbo.security_status_history
+      WHERE security_person_id IN (${historyQuery.placeholders})
+      ORDER BY changed_at DESC, id DESC;
+    `);
+
+    // 4. التصاريح
+    const permitsQuery = createPersonIdRequest();
+
+    const permitsResult = await permitsQuery.request.query(`
+      SELECT
+        id,
+        security_person_id,
+        permit_number,
+        company_name,
+        issue_date,
+        branch,
+        notes
+      FROM dbo.security_permits
+      WHERE security_person_id IN (${permitsQuery.placeholders})
+      ORDER BY issue_date DESC, id DESC;
+    `);
+
+    const incidents = incidentsResult.recordset || [];
+    const history = historyResult.recordset || [];
+    const permits = permitsResult.recordset || [];
+
+    // تجميع البيانات تحت كل شخص
+    const records = persons.map((person) => {
+      const personId = person.id;
+
+      return {
+        ...person,
+
+        incidents: incidents.filter(
+          (item) => item.security_person_id === personId,
+        ),
+
+        statusHistory: history.filter(
+          (item) => item.security_person_id === personId,
+        ),
+
+        permits: permits.filter(
+          (item) => item.security_person_id === personId,
+        ),
+      };
+    });
 
     return res.status(200).json({
       success: true,
-      data: dataResult.recordset,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1,
+      exists: true,
+      nationalId,
+      message: "هذا الرقم القومي موجود في سجلات الأمن.",
+      records,
+      summary: {
+        persons: persons.length,
+        incidents: incidents.length,
+        statusChanges: history.length,
+        permits: permits.length,
       },
     });
   } catch (error) {
-    console.error(
-      "Get recruitment applicants error:",
-      error,
-    );
+    console.error("Check security national ID error:", error);
 
     return res.status(500).json({
-      message:
-        error.message ||
-        "حدث خطأ أثناء جلب المتقدمين.",
-    });
-  }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Create Applicant                                                           */
-/* -------------------------------------------------------------------------- */
-
-export async function createRecruitmentApplicant(req, res) {
-  try {
-    const employeeCode = getEmployeeCode(req);
-
-    const applicant = validateApplicantData(req.body);
-
-    const pool = await securityPoolPromise;
-
-    await checkApplicantNationalId(
-      pool,
-      applicant.nationalId,
-    );
-
-    const result = await pool
-      .request()
-      .input(
-        "name",
-        sql.NVarChar(200),
-        applicant.name,
-      )
-      .input(
-        "nationalId",
-        sql.NVarChar(14),
-        applicant.nationalId,
-      )
-      .input(
-        "mobile",
-        sql.NVarChar(20),
-        applicant.mobile,
-      )
-      .input(
-        "applicationDate",
-        sql.Date,
-        applicant.applicationDate,
-      )
-      .input(
-        "decision",
-        sql.NVarChar(100),
-        applicant.decision,
-      )
-      .input(
-        "reason",
-        sql.NVarChar(1000),
-        applicant.reason,
-      )
-      .input(
-        "createdBy",
-        sql.Int,
-        employeeCode,
-      )
-      .query(`
-        INSERT INTO dbo.recruitment_applicants
-        (
-          name,
-          national_id,
-          mobile,
-          application_date,
-          decision,
-          reason,
-          created_by
-        )
-        OUTPUT
-          INSERTED.id,
-          INSERTED.name,
-          INSERTED.national_id AS nationalId,
-          INSERTED.mobile,
-          INSERTED.application_date AS applicationDate,
-          INSERTED.decision,
-          INSERTED.reason,
-          INSERTED.created_by AS createdBy,
-          INSERTED.created_at AS createdAt,
-          INSERTED.is_deleted AS isDeleted
-        VALUES
-        (
-          @name,
-          @nationalId,
-          @mobile,
-          @applicationDate,
-          @decision,
-          @reason,
-          @createdBy
-        );
-      `);
-
-    return res.status(201).json({
-      success: true,
-      message: "تم إضافة المتقدم بنجاح.",
-      data: result.recordset[0],
-    });
-  } catch (error) {
-    console.error(
-      "Create recruitment applicant error:",
-      error,
-    );
-
-    return res.status(400).json({
-      message:
-        error.message ||
-        "حدث خطأ أثناء إضافة المتقدم.",
-    });
-  }
-}
-/* -------------------------------------------------------------------------- */
-/* Update Applicant                                                           */
-/* -------------------------------------------------------------------------- */
-
-export async function updateRecruitmentApplicant(req, res) {
-  try {
-    const id = Number(req.params.id);
-
-    if (!Number.isInteger(id) || id <= 0) {
-      return res.status(400).json({
-        message: "رقم المتقدم غير صحيح.",
-      });
-    }
-
-    const employeeCode = getEmployeeCode(req);
-
-    // التعديل مسموح للاسم ورقم الهاتف فقط
-    const name = String(req.body.name ?? "").trim();
-    const mobile = String(req.body.mobile ?? "").trim();
-
-    if (!name || name.length > 200) {
-      return res.status(400).json({
-        message: "اسم المتقدم مطلوب، وبحد أقصى 200 حرف.",
-      });
-    }
-
-    if (!mobile || mobile.length > 20) {
-      return res.status(400).json({
-        message: "رقم التليفون مطلوب وبحد أقصى 20 خانة.",
-      });
-    }
-
-    const pool = await securityPoolPromise;
-
-    // التأكد من وجود المتقدم وعدم حذفه
-    const existing = await pool
-      .request()
-      .input("id", sql.Int, id)
-      .query(`
-        SELECT id
-        FROM dbo.recruitment_applicants
-        WHERE id = @id
-          AND is_deleted = 0;
-      `);
-
-    if (existing.recordset.length === 0) {
-      return res.status(404).json({
-        message: "المتقدم غير موجود أو تم حذفه.",
-      });
-    }
-
-    // تحديث الاسم ورقم الهاتف فقط
-    // الرقم القومي وباقي البيانات لا يتم تغييرها
-    const result = await pool
-      .request()
-      .input("id", sql.Int, id)
-      .input("name", sql.NVarChar(200), name)
-      .input("mobile", sql.NVarChar(20), mobile)
-      .input("updatedBy", sql.Int, employeeCode)
-      .query(`
-        UPDATE dbo.recruitment_applicants
-        SET
-          name = @name,
-          mobile = @mobile,
-          updated_by = @updatedBy,
-          updated_at = SYSDATETIME()
-        OUTPUT
-          INSERTED.id,
-          INSERTED.name,
-          INSERTED.national_id AS nationalId,
-          INSERTED.mobile,
-          INSERTED.application_date AS applicationDate,
-          INSERTED.decision,
-          INSERTED.reason,
-          INSERTED.created_by AS createdBy,
-          INSERTED.updated_by AS updatedBy,
-          INSERTED.created_at AS createdAt,
-          INSERTED.updated_at AS updatedAt,
-          INSERTED.is_deleted AS isDeleted
-        WHERE id = @id
-          AND is_deleted = 0;
-      `);
-
-    return res.status(200).json({
-      success: true,
-      message: "تم تعديل الاسم ورقم التليفون بنجاح.",
-      data: result.recordset[0],
-    });
-  } catch (error) {
-    console.error(
-      "Update recruitment applicant error:",
-      error,
-    );
-
-    return res.status(400).json({
-      message:
-        error.message ||
-        "حدث خطأ أثناء تعديل المتقدم.",
-    });
-  }
-}
-
-
-/* -------------------------------------------------------------------------- */
-/* Soft Delete Applicant                                                      */
-/* -------------------------------------------------------------------------- */
-
-export async function deleteRecruitmentApplicant(req, res) {
-  try {
-    const id = Number(req.params.id);
-
-    if (!Number.isInteger(id) || id <= 0) {
-      return res.status(400).json({
-        message: "رقم المتقدم غير صحيح.",
-      });
-    }
-
-    const employeeCode = getEmployeeCode(req);
-
-    const pool = await securityPoolPromise;
-
-    const result = await pool
-      .request()
-      .input("id", sql.Int, id)
-      .input(
-        "updatedBy",
-        sql.Int,
-        employeeCode,
-      )
-      .query(`
-        UPDATE dbo.recruitment_applicants
-        SET
-          is_deleted = 1,
-          updated_by = @updatedBy,
-          updated_at = SYSDATETIME()
-        WHERE id = @id
-          AND is_deleted = 0;
-
-        SELECT @@ROWCOUNT AS affectedRows;
-      `);
-
-    if (result.recordset[0].affectedRows === 0) {
-      return res.status(404).json({
-        message:
-          "المتقدم غير موجود أو تم حذفه بالفعل.",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: "تم حذف المتقدم بنجاح.",
-    });
-  } catch (error) {
-    console.error(
-      "Delete recruitment applicant error:",
-      error,
-    );
-
-    return res.status(500).json({
-      message:
-        error.message ||
-        "حدث خطأ أثناء حذف المتقدم.",
+      success: false,
+      exists: false,
+      message: "حدث خطأ أثناء الاستعلام في سجلات الأمن.",
     });
   }
 }
