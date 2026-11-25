@@ -679,7 +679,102 @@ const auths = await getUserAuths(pool, dbUser.id);
             });
         }
     },
+deleteUser: async (req, res) => {
+    const transaction = null;
 
+    try {
+        const id = req.params.id ?? req.body.id;
+
+        if (
+            id === undefined ||
+            id === null ||
+            String(id).trim() === "" ||
+            !Number.isSafeInteger(Number(id)) ||
+            Number(id) <= 0
+        ) {
+            return res.status(400).json({
+                message: "Invalid user ID",
+            });
+        }
+
+        const pool = await retailPoolPromise;
+        const userId = Number(id);
+
+        const currentUserId = Number(req.user?.id);
+
+        if (currentUserId === userId) {
+            return res.status(400).json({
+                message: "You cannot delete your own account",
+            });
+        }
+
+        const dbTransaction = new sql.Transaction(pool);
+
+        await dbTransaction.begin();
+
+        try {
+            const existingUser = await new sql.Request(dbTransaction)
+                .input("id", sql.Int, userId)
+                .query(`
+                    SELECT id, code, name
+                    FROM dbo.DelegateuserPermissions
+                    WHERE id = @id;
+                `);
+
+            if (existingUser.recordset.length === 0) {
+                await dbTransaction.rollback();
+
+                return res.status(404).json({
+                    message: "User not found",
+                });
+            }
+
+            const deletedUser = existingUser.recordset[0];
+
+            // حذف ارتباطات الصلاحيات الخاصة بالمستخدم.
+            await new sql.Request(dbTransaction)
+                .input("userId", sql.Int, userId)
+                .query(`
+                    DELETE FROM dbo.user_auth
+                    WHERE user_id = @userId;
+                `);
+
+            // حذف المستخدم نفسه.
+            await new sql.Request(dbTransaction)
+                .input("id", sql.Int, userId)
+                .query(`
+                    DELETE FROM dbo.DelegateuserPermissions
+                    WHERE id = @id;
+                `);
+
+            await dbTransaction.commit();
+
+            return res.status(200).json({
+                message: "User deleted successfully",
+                user: {
+                    id: deletedUser.id,
+                    code: deletedUser.code,
+                    name: deletedUser.name,
+                },
+            });
+        } catch (error) {
+            await dbTransaction.rollback();
+            throw error;
+        }
+    } catch (error) {
+        console.error("Delete user error:", error);
+
+        if (error.number === 547) {
+            return res.status(409).json({
+                message: "Cannot delete user because related records exist",
+            });
+        }
+
+        return res.status(500).json({
+            message: "Failed to delete user",
+        });
+    }
+},
 
     logout: async (req, res) => {
         res.clearCookie("accessToken", {

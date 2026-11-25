@@ -26,7 +26,9 @@ import securityRoutes from "./routes/security.js";
 import dashboardMarketingCoordinatorsRouter from "./routes/dashboardMarketingCoordinators.js";
 import recuritmentRoutes from "./routes/recuritment.js";
 import externalSecurityRoutes from "./routes/externalSecurityRoutes.js";
-
+import dailyExchangeRoutes from "./routes/dailyExchange.js";
+import supplierFactorsRoutes from "./routes/supplierFactors.js";
+import manufacturingCostRoutes from "./routes/manufacturingCostRoutes.js";
 /* -------------------------------------------------------------------------- */
 /* Environment                                                                */
 /* -------------------------------------------------------------------------- */
@@ -125,7 +127,9 @@ app.use("/temporary-coordinators", temporaryCoordinator);
 app.use("/advertising-companies", advertisingCompany);
 app.use("/security", securityRoutes);
 app.use("/recuritment", recuritmentRoutes);
-
+app.use("/daily-exchange", dailyExchangeRoutes);
+app.use("/supplier-factors", supplierFactorsRoutes);
+app.use("/manufacturing-cost", manufacturingCostRoutes);
 /* -------------------------------------------------------------------------- */
 /* React Frontend                                                             */
 /* -------------------------------------------------------------------------- */
@@ -162,6 +166,9 @@ if (frontendDistPath) {
             "/security",
             "/dashboard-marketing-coordinators",
             "/recuritment",
+            "/daily-exchange",
+            "/supplier-factors",
+            "/manufacturing-cost",
         ];
 
         app.get("/{*path}", (req, res, next) => {

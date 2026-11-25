@@ -41,7 +41,12 @@ router.put(
     adminMiddleware,
     UserController.updateUser
 );
-
+router.delete(
+    "/:id",
+    authMiddleware,
+    adminMiddleware,
+    UserController.deleteUser
+);
 router.post("/signup", UserController.signup);
 
 export default router;
